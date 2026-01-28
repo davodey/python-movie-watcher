@@ -97,16 +97,21 @@ class MovieWatcher:
         video_files.sort(key=lambda x: x[1], reverse=True)
         return video_files[0][0]
 
-    def wait_for_stable(self, filepath):
+    def wait_for_stable(self, filepath, check_interval=10, max_wait=1800):
         """Wait for a file to stop changing size (download complete).
+
+        Polls the file size repeatedly until it stops changing, supporting
+        large files (10GB+) that may take a long time to finish downloading.
 
         Args:
             filepath: Path to the file to monitor.
+            check_interval: Seconds between size checks.
+            max_wait: Maximum total seconds to wait (default 30 minutes).
 
         Returns:
-            bool: True if file is stable, False if it disappeared.
+            bool: True if file is stable, False if it disappeared or timed out.
         """
-        logger.info("Waiting %d seconds for file to stabilize: %s",
+        logger.info("Waiting %d seconds for initial settle: %s",
                      self.settle_time, filepath)
         time.sleep(self.settle_time)
 
@@ -114,23 +119,29 @@ class MovieWatcher:
             logger.warning("File disappeared during settle time: %s", filepath)
             return False
 
-        # Check size hasn't changed
-        size1 = os.path.getsize(filepath)
-        time.sleep(2)
+        elapsed = self.settle_time
+        prev_size = os.path.getsize(filepath)
 
-        if not os.path.exists(filepath):
-            return False
+        while elapsed < max_wait:
+            time.sleep(check_interval)
+            elapsed += check_interval
 
-        size2 = os.path.getsize(filepath)
-        if size1 != size2:
-            logger.info("File still changing size, waiting again: %s", filepath)
-            time.sleep(self.settle_time)
             if not os.path.exists(filepath):
-                return False
-            size3 = os.path.getsize(filepath)
-            if size2 != size3:
-                logger.warning("File still changing after extended wait: %s", filepath)
+                logger.warning("File disappeared during stability check: %s", filepath)
                 return False
 
-        logger.info("File is stable: %s", filepath)
-        return True
+            current_size = os.path.getsize(filepath)
+
+            if current_size == prev_size:
+                logger.info("File is stable (%d MB, waited %ds): %s",
+                            current_size // (1024 * 1024), elapsed, filepath)
+                return True
+
+            logger.info("File still changing (%d MB -> %d MB, %ds elapsed): %s",
+                        prev_size // (1024 * 1024),
+                        current_size // (1024 * 1024),
+                        elapsed, filepath)
+            prev_size = current_size
+
+        logger.warning("File still changing after %ds, giving up: %s", max_wait, filepath)
+        return False
