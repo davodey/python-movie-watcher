@@ -6,8 +6,13 @@ import sys
 
 DEFAULT_CONFIG = {
     "tmdb_api_key": "",
+    # Movie directories
     "watch_directory": "/media/david/MEDIA/torrents/complete/movies",
     "destination_directory": "/media/david/MEDIA/media/movies",
+    # TV show directories
+    "tv_watch_directory": "/media/david/MEDIA/torrents/complete/tv",
+    "tv_destination_directory": "/media/david/MEDIA/media/tv",
+    # General settings
     "settle_time": 30,
     "min_file_size_mb": 100,
     "scan_interval": 60,
