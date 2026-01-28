@@ -46,6 +46,13 @@ STRIP_PATTERNS = [
 YEAR_PATTERN = re.compile(r'[\.\s\(]?((?:19|20)\d{2})[\.\s\)]?')
 
 
+# Known video file extensions to strip
+VIDEO_EXTENSIONS = {
+    '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm',
+    '.mpg', '.mpeg', '.m2ts', '.ts', '.vob', '.divx', '.iso',
+}
+
+
 def parse_movie_filename(filename):
     """Parse a torrent movie filename into title and year.
 
@@ -60,8 +67,10 @@ def parse_movie_filename(filename):
     """
     original = filename
 
-    # Remove file extension if present
-    name, _ = os.path.splitext(filename)
+    # Only strip known video extensions (not arbitrary ones like .org)
+    name, ext = os.path.splitext(filename)
+    if ext.lower() not in VIDEO_EXTENSIONS:
+        name = filename
 
     # Replace dots and underscores with spaces early so patterns match cleanly
     name = name.replace('.', ' ').replace('_', ' ')
