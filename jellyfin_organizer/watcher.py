@@ -97,11 +97,11 @@ class MovieWatcher:
         video_files.sort(key=lambda x: x[1], reverse=True)
         return video_files[0][0]
 
-    def wait_for_stable(self, filepath, check_interval=10, max_wait=1800):
+    def wait_for_stable(self, filepath, check_interval=5, max_wait=1800):
         """Wait for a file to stop changing size (download complete).
 
-        Polls the file size repeatedly until it stops changing, supporting
-        large files (10GB+) that may take a long time to finish downloading.
+        Checks immediately, then polls every 5 seconds until two consecutive
+        checks show the same size. Supports large files (10GB+).
 
         Args:
             filepath: Path to the file to monitor.
@@ -111,15 +111,12 @@ class MovieWatcher:
         Returns:
             bool: True if file is stable, False if it disappeared or timed out.
         """
-        logger.info("Waiting %d seconds for initial settle: %s",
-                     self.settle_time, filepath)
-        time.sleep(self.settle_time)
-
         if not os.path.exists(filepath):
-            logger.warning("File disappeared during settle time: %s", filepath)
+            logger.warning("File does not exist: %s", filepath)
             return False
 
-        elapsed = self.settle_time
+        logger.info("Checking file stability: %s", filepath)
+        elapsed = 0
         prev_size = os.path.getsize(filepath)
 
         while elapsed < max_wait:
