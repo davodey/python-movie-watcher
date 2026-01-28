@@ -254,6 +254,9 @@ def parse_tv_filename(filename):
     for pattern in STRIP_PATTERNS:
         show_name = re.sub(pattern, ' ', show_name, flags=re.IGNORECASE)
 
+    # Remove "Season X" from show name (often appears before S## in folder names)
+    show_name = re.sub(r'\bSeason\s*\d+\b', '', show_name, flags=re.IGNORECASE)
+
     # Remove bracketed content
     show_name = re.sub(r'[\[\(][^\]\)]*[\]\)]', ' ', show_name)
 

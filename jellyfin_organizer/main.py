@@ -437,11 +437,13 @@ def main():
 
     if args.process:
         # Single file mode
+        service.running = True  # Enable processing
         service.process_single(args.process, args.type)
     else:
         # Service mode
         if args.scan_existing:
             logger.info("Processing existing files...")
+            service.running = True  # Enable processing for scan-existing
 
             # Process existing movies
             if os.path.isdir(config["watch_directory"]):
