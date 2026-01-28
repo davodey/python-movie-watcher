@@ -43,12 +43,15 @@ class MovieOrganizer:
         Returns:
             str or None: Destination folder path on success, None on failure.
         """
-        # Determine folder name: use original folder name if source is a directory,
-        # otherwise use the original filename (without extension)
-        if os.path.isdir(source_entry):
-            folder_name = os.path.basename(source_entry)
+        # Use the official TMDb title and year for a clean, standard folder name
+        title = movie_data.get("title", parsed_info.get("title", "Movie"))
+        year = movie_data.get("year") or parsed_info.get("year")
+        title = _sanitize_filename(title)
+
+        if year:
+            folder_name = f"{title} ({year})"
         else:
-            folder_name = os.path.splitext(os.path.basename(source_entry))[0]
+            folder_name = title
 
         dest_folder = os.path.join(self.destination_dir, folder_name)
 
@@ -73,18 +76,16 @@ class MovieOrganizer:
         os.makedirs(dest_folder, exist_ok=True)
         logger.info("Created destination: %s", dest_folder)
 
-        # Step 2: Determine destination video filename
-        title = parsed_info.get("title", "Movie")
-        year = parsed_info.get("year")
+        # Step 2: Determine destination video filename using TMDb official title
+        title = movie_data.get("title", parsed_info.get("title", "Movie"))
+        year = movie_data.get("year") or parsed_info.get("year")
+        title = _sanitize_filename(title)
         video_ext = os.path.splitext(video_path)[1]
 
         if year:
-            video_filename = f"{title}.{year}{video_ext}"
+            video_filename = f"{title} ({year}){video_ext}"
         else:
             video_filename = f"{title}{video_ext}"
-
-        # Sanitize filename
-        video_filename = _sanitize_filename(video_filename)
         dest_video = os.path.join(dest_folder, video_filename)
 
         # Step 3: Move video file
