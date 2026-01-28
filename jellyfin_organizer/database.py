@@ -84,6 +84,18 @@ class ProcessedDatabase:
             )
         logger.info("Recorded processed: %s (%s)", source_path, status)
 
+    def clear_failed(self):
+        """Remove all failed entries so they can be retried.
+
+        Returns:
+            int: Number of entries cleared.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM processed WHERE status = 'failed'")
+            count = cursor.rowcount
+        logger.info("Cleared %d failed entries from database", count)
+        return count
+
     def get_recent(self, limit=20):
         """Get recently processed entries.
 

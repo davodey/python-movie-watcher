@@ -63,6 +63,12 @@ def parse_movie_filename(filename):
     # Remove file extension if present
     name, _ = os.path.splitext(filename)
 
+    # Replace dots and underscores with spaces early so patterns match cleanly
+    name = name.replace('.', ' ').replace('_', ' ')
+
+    # Strip leading website tags like "www SiteName org - " or "www SiteName com  -  "
+    name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+
     # Find year first (we'll use it to truncate the name)
     year = None
     year_match = YEAR_PATTERN.search(name)
@@ -71,9 +77,6 @@ def parse_movie_filename(filename):
         # Truncate everything after the year
         year_pos = year_match.start()
         name = name[:year_pos]
-
-    # Replace dots and underscores with spaces
-    name = name.replace('.', ' ').replace('_', ' ')
 
     # Apply strip patterns to catch anything before the year too
     for pattern in STRIP_PATTERNS:

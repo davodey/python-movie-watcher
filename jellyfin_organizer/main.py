@@ -218,6 +218,11 @@ def main():
         action="store_true",
         help="Process all existing files in watch directory on startup",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Clear failed entries from database so they are retried",
+    )
 
     args = parser.parse_args()
 
@@ -236,6 +241,10 @@ def main():
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+
+    if args.retry_failed:
+        cleared = service.db.clear_failed()
+        logger.info("Cleared %d failed entries for retry", cleared)
 
     if args.process:
         # Single file mode
