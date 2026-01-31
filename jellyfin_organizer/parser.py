@@ -45,6 +45,13 @@ STRIP_PATTERNS = [
 # Year pattern: 4 digits that look like a year (1900-2099)
 YEAR_PATTERN = re.compile(r'[\.\s\(]?((?:19|20)\d{2})[\.\s\)]?')
 
+# TV show episode pattern: S01E01, S1E1, 1x01, etc.
+TV_EPISODE_PATTERN = re.compile(
+    r'[.\s_-]*[Ss](\d{1,2})[Ee](\d{1,2})(?:[Ee]\d{1,2})?'  # S01E01 or S01E01E02
+    r'|[.\s_-]*(\d{1,2})[xX](\d{1,2})',  # 1x01 format
+    re.IGNORECASE
+)
+
 
 def parse_movie_filename(filename):
     """Parse a torrent movie filename into title and year.
@@ -98,6 +105,76 @@ def parse_movie_filename(filename):
     return {
         "title": name,
         "year": year,
+        "original": original,
+    }
+
+
+def parse_tv_filename(filename):
+    """Parse a torrent TV show filename into show name, season, and episode.
+
+    Args:
+        filename: The filename or folder name to parse (with or without extension).
+
+    Returns:
+        dict with keys:
+            - show_name: Cleaned show title
+            - season: Season number as int, or None
+            - episode: Episode number as int, or None
+            - original: Original filename
+    """
+    original = filename
+
+    # Remove file extension if present
+    name, _ = os.path.splitext(filename)
+
+    # Replace dots and underscores with spaces
+    name = name.replace('.', ' ').replace('_', ' ')
+
+    # Strip leading website tags
+    name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+
+    # Find and extract season/episode info
+    season = None
+    episode = None
+    ep_match = TV_EPISODE_PATTERN.search(name)
+
+    if ep_match:
+        # S01E01 format
+        if ep_match.group(1) and ep_match.group(2):
+            season = int(ep_match.group(1))
+            episode = int(ep_match.group(2))
+        # 1x01 format
+        elif ep_match.group(3) and ep_match.group(4):
+            season = int(ep_match.group(3))
+            episode = int(ep_match.group(4))
+
+        # Truncate name at the episode pattern
+        name = name[:ep_match.start()]
+
+    # Apply strip patterns
+    for pattern in STRIP_PATTERNS:
+        name = re.sub(pattern, ' ', name, flags=re.IGNORECASE)
+
+    # Remove any remaining bracketed content
+    name = re.sub(r'[\[\(][^\]\)]*[\]\)]', ' ', name)
+
+    # Remove "Season X" if present (for folder names like "Show - Season 2")
+    name = re.sub(r'\s*-?\s*[Ss]eason\s*\d+\s*$', '', name)
+
+    # Clean up whitespace
+    name = re.sub(r'\s+', ' ', name).strip()
+
+    # Remove trailing dashes or dots
+    name = name.rstrip('- .')
+
+    # Title case if all lowercase
+    if name == name.lower() and len(name) > 3:
+        name = name.title()
+
+    return {
+        "show_name": name,
+        "season": season,
+        "episode": episode,
         "original": original,
     }
 

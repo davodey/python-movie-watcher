@@ -196,3 +196,138 @@ class TMDbClient:
             "poster_url": poster_url,
             "backdrop_url": backdrop_url,
         }
+
+    # ==================== TV Show Methods ====================
+
+    def search_tv(self, show_name):
+        """Search for a TV show by name.
+
+        Args:
+            show_name: TV show name to search for.
+
+        Returns:
+            dict or None: Best matching TV show result, or None if no match.
+        """
+        params = {"query": show_name}
+        data = self._get("/search/tv", params)
+
+        if data.get("results"):
+            return data["results"][0]
+        return None
+
+    def get_tv_details(self, tv_id):
+        """Get full TV show details.
+
+        Args:
+            tv_id: TMDb TV show ID.
+
+        Returns:
+            dict: Complete TV show details.
+        """
+        data = self._get(
+            f"/tv/{tv_id}",
+            params={"append_to_response": "external_ids"},
+        )
+        return data
+
+    def get_tv_episode_details(self, tv_id, season, episode):
+        """Get details for a specific episode.
+
+        Args:
+            tv_id: TMDb TV show ID.
+            season: Season number.
+            episode: Episode number.
+
+        Returns:
+            dict or None: Episode details, or None if not found.
+        """
+        try:
+            data = self._get(f"/tv/{tv_id}/season/{season}/episode/{episode}")
+            return data
+        except Exception:
+            return None
+
+    def get_full_tv_info(self, show_name, season=None, episode=None):
+        """Search for a TV show and return complete metadata.
+
+        Args:
+            show_name: TV show name to search for.
+            season: Optional season number for episode-specific info.
+            episode: Optional episode number for episode-specific info.
+
+        Returns:
+            dict or None: Complete TV show metadata, or None if no match found.
+        """
+        search_result = self.search_tv(show_name)
+        if not search_result:
+            logger.warning("No TMDb TV match found for: %s", show_name)
+            return None
+
+        tv_id = search_result["id"]
+        details = self.get_tv_details(tv_id)
+
+        # Get episode details if season/episode provided
+        episode_data = None
+        if season is not None and episode is not None:
+            episode_data = self.get_tv_episode_details(tv_id, season, episode)
+
+        return self._format_tv_data(details, episode_data, season, episode)
+
+    def _format_tv_data(self, details, episode_data=None, season=None, episode=None):
+        """Format raw TMDb TV API data into organized metadata dict.
+
+        Args:
+            details: Raw TMDb TV show details response.
+            episode_data: Optional episode details.
+            season: Season number.
+            episode: Episode number.
+
+        Returns:
+            dict: Formatted TV show metadata.
+        """
+        external_ids = details.get("external_ids", {})
+        imdb_id = external_ids.get("imdb_id", "")
+
+        # Image URLs
+        poster_url = (
+            f"{TMDB_IMAGE_BASE}/original{details['poster_path']}"
+            if details.get("poster_path")
+            else ""
+        )
+        backdrop_url = (
+            f"{TMDB_IMAGE_BASE}/original{details['backdrop_path']}"
+            if details.get("backdrop_path")
+            else ""
+        )
+
+        first_air_date = details.get("first_air_date", "")
+        year = int(first_air_date[:4]) if first_air_date and len(first_air_date) >= 4 else None
+
+        result = {
+            "show_name": details.get("name", ""),
+            "original_name": details.get("original_name", ""),
+            "year": year,
+            "first_air_date": first_air_date,
+            "plot": details.get("overview", ""),
+            "tmdb_id": details.get("id"),
+            "imdb_id": imdb_id,
+            "rating": details.get("vote_average"),
+            "votes": details.get("vote_count"),
+            "genres": [g["name"] for g in details.get("genres", [])],
+            "networks": [n["name"] for n in details.get("networks", [])],
+            "poster_url": poster_url,
+            "backdrop_url": backdrop_url,
+            "season": season,
+            "episode": episode,
+            "episode_title": None,
+            "episode_plot": None,
+            "episode_air_date": None,
+        }
+
+        # Add episode-specific data if available
+        if episode_data:
+            result["episode_title"] = episode_data.get("name", "")
+            result["episode_plot"] = episode_data.get("overview", "")
+            result["episode_air_date"] = episode_data.get("air_date", "")
+
+        return result

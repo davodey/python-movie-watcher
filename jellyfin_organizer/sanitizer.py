@@ -5,8 +5,8 @@ import os
 import time
 
 from .database import ProcessedDatabase
-from .organizer import MovieOrganizer
-from .parser import parse_movie_filename
+from .organizer import MovieOrganizer, TVOrganizer
+from .parser import parse_movie_filename, parse_tv_filename
 from .tmdb import TMDbClient
 from .watcher import MovieWatcher
 
@@ -45,23 +45,36 @@ class MediaSanitizer:
 
         # Create a watcher and organizer for each watch directory
         self.watch_configs = []
+        subtitle_extensions = config.get("subtitle_extensions", [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"])
+
         for watch_config in config.get("watch_directories", []):
+            media_type = watch_config.get("media_type", "movies")
+
             watcher = MovieWatcher(
                 watch_dir=watch_config["source"],
                 video_extensions=config.get("video_extensions", [".mkv", ".mp4", ".avi", ".m4v"]),
                 min_size_mb=config.get("min_file_size_mb", 100),
                 settle_time=config.get("settle_time", 30),
             )
-            organizer = MovieOrganizer(
-                destination_dir=watch_config["destination"],
-                subtitle_extensions=config.get("subtitle_extensions", [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"]),
-            )
+
+            # Use TV organizer for TV shows, movie organizer for movies
+            if media_type == "tv":
+                organizer = TVOrganizer(
+                    destination_dir=watch_config["destination"],
+                    subtitle_extensions=subtitle_extensions,
+                )
+            else:
+                organizer = MovieOrganizer(
+                    destination_dir=watch_config["destination"],
+                    subtitle_extensions=subtitle_extensions,
+                )
+
             self.watch_configs.append({
                 "watcher": watcher,
                 "organizer": organizer,
                 "source": watch_config["source"],
                 "destination": watch_config["destination"],
-                "media_type": watch_config.get("media_type", "unknown"),
+                "media_type": media_type,
             })
 
     def start(self):
@@ -153,44 +166,97 @@ class MediaSanitizer:
             logger.warning("File not stable, skipping: %s", entry_name)
             return
 
-        # Parse filename
+        # Parse filename based on media type
         parse_name = entry_name if os.path.isdir(entry_path) else os.path.basename(video_path)
-        parsed = parse_movie_filename(parse_name)
-        logger.info("Parsed: title='%s', year=%s", parsed["title"], parsed["year"])
 
-        # Search TMDb for metadata
-        logger.info("Searching TMDb for: %s (%s)", parsed["title"], parsed["year"])
-        movie_data = self.tmdb.get_full_movie_info(parsed["title"], parsed["year"])
+        if media_type == "tv":
+            # TV show processing
+            parsed = parse_tv_filename(parse_name)
+            logger.info("Parsed TV: show='%s', S%02dE%02d",
+                       parsed["show_name"],
+                       parsed["season"] or 0,
+                       parsed["episode"] or 0)
 
-        if not movie_data:
-            logger.warning("No TMDb match found for: %s", parsed["title"])
-            self.db.mark_processed(entry_path, status="failed")
-            return
-
-        logger.info("TMDb match: %s (%s) [ID: %s]",
-                   movie_data["title"], movie_data["year"], movie_data["tmdb_id"])
-
-        # Organize the movie (creates folder, moves files, downloads artwork, creates NFO)
-        dest_folder = organizer.organize(
-            video_path=video_path,
-            source_entry=entry_path,
-            movie_data=movie_data,
-            parsed_info=parsed,
-        )
-
-        if dest_folder:
-            self.db.mark_processed(
-                source_path=entry_path,
-                dest_path=dest_folder,
-                title=movie_data["title"],
-                year=movie_data.get("year"),
-                tmdb_id=movie_data.get("tmdb_id"),
-                status="success",
+            # Search TMDb TV API
+            logger.info("Searching TMDb TV for: %s", parsed["show_name"])
+            tv_data = self.tmdb.get_full_tv_info(
+                parsed["show_name"],
+                parsed["season"],
+                parsed["episode"]
             )
-            logger.info("SUCCESS: %s -> %s", entry_name, dest_folder)
+
+            if not tv_data:
+                logger.warning("No TMDb TV match found for: %s", parsed["show_name"])
+                self.db.mark_processed(entry_path, status="failed")
+                return
+
+            logger.info("TMDb TV match: %s [ID: %s]",
+                       tv_data["show_name"], tv_data["tmdb_id"])
+            if tv_data.get("episode_title"):
+                logger.info("Episode: S%02dE%02d - %s",
+                           parsed["season"] or 0,
+                           parsed["episode"] or 0,
+                           tv_data["episode_title"])
+
+            # Organize the TV episode
+            dest_folder = organizer.organize(
+                video_path=video_path,
+                source_entry=entry_path,
+                tv_data=tv_data,
+                parsed_info=parsed,
+            )
+
+            if dest_folder:
+                self.db.mark_processed(
+                    source_path=entry_path,
+                    dest_path=dest_folder,
+                    title=tv_data["show_name"],
+                    year=tv_data.get("year"),
+                    tmdb_id=tv_data.get("tmdb_id"),
+                    status="success",
+                )
+                logger.info("SUCCESS: %s -> %s", entry_name, dest_folder)
+            else:
+                self.db.mark_processed(entry_path, status="failed")
+                logger.error("FAILED: %s", entry_name)
         else:
-            self.db.mark_processed(entry_path, status="failed")
-            logger.error("FAILED: %s", entry_name)
+            # Movie processing (default)
+            parsed = parse_movie_filename(parse_name)
+            logger.info("Parsed: title='%s', year=%s", parsed["title"], parsed["year"])
+
+            # Search TMDb for metadata
+            logger.info("Searching TMDb for: %s (%s)", parsed["title"], parsed["year"])
+            movie_data = self.tmdb.get_full_movie_info(parsed["title"], parsed["year"])
+
+            if not movie_data:
+                logger.warning("No TMDb match found for: %s", parsed["title"])
+                self.db.mark_processed(entry_path, status="failed")
+                return
+
+            logger.info("TMDb match: %s (%s) [ID: %s]",
+                       movie_data["title"], movie_data["year"], movie_data["tmdb_id"])
+
+            # Organize the movie
+            dest_folder = organizer.organize(
+                video_path=video_path,
+                source_entry=entry_path,
+                movie_data=movie_data,
+                parsed_info=parsed,
+            )
+
+            if dest_folder:
+                self.db.mark_processed(
+                    source_path=entry_path,
+                    dest_path=dest_folder,
+                    title=movie_data["title"],
+                    year=movie_data.get("year"),
+                    tmdb_id=movie_data.get("tmdb_id"),
+                    status="success",
+                )
+                logger.info("SUCCESS: %s -> %s", entry_name, dest_folder)
+            else:
+                self.db.mark_processed(entry_path, status="failed")
+                logger.error("FAILED: %s", entry_name)
 
     def process_existing(self):
         """Process all existing files in watch directories."""
