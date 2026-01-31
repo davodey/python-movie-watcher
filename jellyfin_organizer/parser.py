@@ -208,10 +208,21 @@ def parse_tv_filename(filename):
     if name == name.lower() and len(name) > 3:
         name = name.title()
 
+    # Extract year if present in the show name (e.g., "Show Name 2020")
+    year = None
+    year_match = YEAR_PATTERN.search(name)
+    if year_match:
+        year = int(year_match.group(1))
+        # Remove year from show name
+        name = name[:year_match.start()] + name[year_match.end():]
+        name = re.sub(r'\s+', ' ', name).strip().rstrip('- .')
+
     return {
-        "show_name": name,
+        "show": name,
+        "show_name": name,  # Keep for backwards compatibility
         "season": season,
         "episode": episode,
+        "year": year,
         "original": original,
     }
 
