@@ -1,4 +1,4 @@
-"""Intelligent filename parsing for torrent movie files."""
+"""Intelligent filename parsing for torrent movie and TV show files."""
 
 import os
 import re
@@ -45,6 +45,32 @@ STRIP_PATTERNS = [
 # Year pattern: 4 digits that look like a year (1900-2099)
 YEAR_PATTERN = re.compile(r'[\.\s\(]?((?:19|20)\d{2})[\.\s\)]?')
 
+# TV episode patterns (order matters - try most specific first)
+TV_EPISODE_PATTERNS = [
+    # S01E01 or S01E01E02 (multi-episode)
+    re.compile(r'[.\s]S(\d{1,2})E(\d{1,3})(?:E\d{1,3})*[.\s]', re.IGNORECASE),
+    # S01.E01 or S01 E01
+    re.compile(r'[.\s]S(\d{1,2})[.\s]?E(\d{1,3})[.\s]', re.IGNORECASE),
+    # 1x01 format
+    re.compile(r'[.\s](\d{1,2})x(\d{1,3})[.\s]', re.IGNORECASE),
+    # Season 1 Episode 1
+    re.compile(r'Season[.\s]?(\d{1,2})[.\s]?Episode[.\s]?(\d{1,3})', re.IGNORECASE),
+]
+
+# Season-only patterns (for season packs)
+TV_SEASON_PATTERNS = [
+    # S01 or Season 1 (without episode)
+    re.compile(r'[.\s]S(\d{1,2})(?:[.\s]|$)(?!E)', re.IGNORECASE),
+    re.compile(r'Season[.\s]?(\d{1,2})(?:[.\s]|$)', re.IGNORECASE),
+]
+
+
+# Known video file extensions to strip
+VIDEO_EXTENSIONS = {
+    '.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm',
+    '.mpg', '.mpeg', '.m2ts', '.ts', '.vob', '.divx', '.iso',
+}
+
 
 def parse_movie_filename(filename):
     """Parse a torrent movie filename into title and year.
@@ -60,8 +86,10 @@ def parse_movie_filename(filename):
     """
     original = filename
 
-    # Remove file extension if present
-    name, _ = os.path.splitext(filename)
+    # Only strip known video extensions (not arbitrary ones like .org)
+    name, ext = os.path.splitext(filename)
+    if ext.lower() not in VIDEO_EXTENSIONS:
+        name = filename
 
     # Replace dots and underscores with spaces early so patterns match cleanly
     name = name.replace('.', ' ').replace('_', ' ')
@@ -146,3 +174,117 @@ def find_subtitle_files(directory, subtitle_extensions):
                 if ext.lower() in subtitle_extensions:
                     subtitle_files.append(full_path)
     return subtitle_files
+
+
+def parse_tv_filename(filename):
+    """Parse a torrent TV show filename into show name, season, and episode.
+
+    Args:
+        filename: The filename or folder name to parse.
+
+    Returns:
+        dict with keys:
+            - show: Cleaned show name
+            - season: Season number as int, or None
+            - episode: Episode number as int, or None
+            - year: Year as int, or None (for show premiere year)
+            - is_season_pack: True if this appears to be a full season
+            - original: Original filename
+        Returns None if no TV pattern is detected.
+    """
+    original = filename
+
+    # Only strip known video extensions
+    name, ext = os.path.splitext(filename)
+    if ext.lower() not in VIDEO_EXTENSIONS:
+        name = filename
+
+    # Replace dots and underscores with spaces
+    name_spaced = name.replace('.', ' ').replace('_', ' ')
+
+    # Strip leading website tags
+    name_spaced = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name_spaced, flags=re.IGNORECASE)
+
+    # Try to find episode pattern first (most common)
+    season = None
+    episode = None
+    match_pos = None
+
+    for pattern in TV_EPISODE_PATTERNS:
+        match = pattern.search(name)
+        if match:
+            season = int(match.group(1))
+            episode = int(match.group(2))
+            match_pos = match.start()
+            break
+
+    # If no episode found, check for season pack
+    is_season_pack = False
+    if season is None:
+        for pattern in TV_SEASON_PATTERNS:
+            match = pattern.search(name)
+            if match:
+                season = int(match.group(1))
+                is_season_pack = True
+                match_pos = match.start()
+                break
+
+    # If no TV pattern found, return None
+    if season is None:
+        return None
+
+    # Extract show name (everything before the season/episode marker)
+    show_name = name[:match_pos] if match_pos else name
+
+    # Clean up show name
+    show_name = show_name.replace('.', ' ').replace('_', ' ')
+
+    # Strip website prefixes from show name
+    show_name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', show_name, flags=re.IGNORECASE)
+
+    # Try to extract year from show name (e.g., "The Office 2005")
+    year = None
+    year_match = YEAR_PATTERN.search(show_name)
+    if year_match:
+        year = int(year_match.group(1))
+        # Remove year from show name
+        show_name = show_name[:year_match.start()] + show_name[year_match.end():]
+
+    # Apply strip patterns
+    for pattern in STRIP_PATTERNS:
+        show_name = re.sub(pattern, ' ', show_name, flags=re.IGNORECASE)
+
+    # Remove "Season X" from show name (often appears before S## in folder names)
+    show_name = re.sub(r'\bSeason\s*\d+\b', '', show_name, flags=re.IGNORECASE)
+
+    # Remove bracketed content
+    show_name = re.sub(r'[\[\(][^\]\)]*[\]\)]', ' ', show_name)
+
+    # Clean up whitespace
+    show_name = re.sub(r'\s+', ' ', show_name).strip()
+    show_name = show_name.rstrip('- .')
+
+    # Title case if all uppercase
+    if show_name == show_name.upper() and len(show_name) > 3:
+        show_name = show_name.title()
+
+    return {
+        "show": show_name,
+        "season": season,
+        "episode": episode,
+        "year": year,
+        "is_season_pack": is_season_pack,
+        "original": original,
+    }
+
+
+def is_tv_show(filename):
+    """Check if a filename appears to be a TV show (has season/episode markers).
+
+    Args:
+        filename: The filename to check.
+
+    Returns:
+        bool: True if this looks like a TV show episode.
+    """
+    return parse_tv_filename(filename) is not None
