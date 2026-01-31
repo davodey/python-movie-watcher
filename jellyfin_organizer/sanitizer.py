@@ -194,6 +194,7 @@ class MediaSanitizer:
 
     def process_existing(self):
         """Process all existing files in watch directories."""
+        self.running = True  # Enable processing
         for w in self.watch_configs:
             source = w["source"]
             if not os.path.isdir(source):
