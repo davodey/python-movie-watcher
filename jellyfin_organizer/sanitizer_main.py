@@ -12,6 +12,7 @@ from .sanitizer import MediaSanitizer
 
 # Default configuration for the sanitizer
 DEFAULT_SANITIZER_CONFIG = {
+    "tmdb_api_key": "",
     "watch_directories": [
         {
             "source": "/mnt/media/torrents/complete/tv",
@@ -28,7 +29,9 @@ DEFAULT_SANITIZER_CONFIG = {
     "min_file_size_mb": 100,
     "scan_interval": 60,
     "log_file": "/var/log/media_sanitizer.log",
+    "database_file": "/var/lib/media_sanitizer/processed.db",
     "video_extensions": [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".flv", ".mov", ".ts"],
+    "subtitle_extensions": [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"],
 }
 
 CONFIG_SEARCH_PATHS = [
@@ -59,8 +62,14 @@ def load_config(config_path=None):
         config.update(user_config)
         print(f"Loaded config from: {config_path}")
     else:
-        print("No config file found, using defaults.")
-        print(f"Searched: {CONFIG_SEARCH_PATHS}")
+        print(f"ERROR: No config file found. Searched: {CONFIG_SEARCH_PATHS}", file=sys.stderr)
+        print("Create a sanitizer_config.json file with your TMDb API key.", file=sys.stderr)
+        sys.exit(1)
+
+    if not config.get("tmdb_api_key"):
+        print("ERROR: TMDb API key not set in config file.", file=sys.stderr)
+        print("Get a free key at https://www.themoviedb.org/settings/api", file=sys.stderr)
+        sys.exit(1)
 
     return config
 
@@ -100,7 +109,7 @@ def setup_logging(log_file):
 def main():
     """CLI entry point for the Media Sanitizer."""
     parser = argparse.ArgumentParser(
-        description="Media Sanitizer - Watch directories and sanitize media filenames",
+        description="Media Sanitizer - Watch directories and organize with full TMDb metadata",
     )
     parser.add_argument(
         "-c", "--config",
@@ -110,6 +119,11 @@ def main():
         "--scan-existing",
         action="store_true",
         help="Process all existing files in watch directories on startup",
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Clear failed entries from database so they are retried",
     )
 
     args = parser.parse_args()
@@ -131,6 +145,11 @@ def main():
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Clear failed entries if requested
+    if args.retry_failed:
+        cleared = service.db.clear_failed()
+        logger.info("Cleared %d failed entries for retry", cleared)
 
     # Process existing files if requested
     if args.scan_existing:

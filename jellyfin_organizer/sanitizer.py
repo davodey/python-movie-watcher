@@ -1,45 +1,50 @@
-"""Media file sanitizer - watches directories and sanitizes filenames."""
+"""Media Sanitizer - watches directories and organizes with full TMDb metadata."""
 
 import logging
 import os
-import shutil
-import signal
 import time
 
+from .database import ProcessedDatabase
+from .organizer import MovieOrganizer
 from .parser import parse_movie_filename
+from .tmdb import TMDbClient
 from .watcher import MovieWatcher
 
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_filename(name):
-    """Remove or replace characters that are invalid in filenames."""
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        name = name.replace(char, "")
-    # Remove leading/trailing dots and spaces
-    name = name.strip(". ")
-    return name
-
-
 class MediaSanitizer:
-    """Watches directories for media files, sanitizes names, and moves them."""
+    """Watches directories for media files and organizes them with full metadata.
+
+    Uses the same pipeline as the main Jellyfin organizer:
+    - TMDb lookup for proper titles and metadata
+    - Artwork download (poster, backdrop)
+    - NFO file generation
+    - Proper folder structure
+    """
 
     def __init__(self, config):
         """
         Args:
             config: dict with keys:
+                - tmdb_api_key: TMDb API key for metadata lookup
                 - watch_directories: list of dicts with 'source' and 'destination' keys
                 - video_extensions: list of video file extensions
+                - subtitle_extensions: list of subtitle file extensions
                 - min_file_size_mb: minimum file size to process
                 - settle_time: seconds to wait for file to stabilize
                 - scan_interval: seconds between scans
+                - database_file: path to SQLite database for tracking
         """
         self.config = config
         self.running = False
-        self.watchers = []
 
-        # Create a watcher for each watch directory
+        # Initialize shared components
+        self.tmdb = TMDbClient(config["tmdb_api_key"])
+        self.db = ProcessedDatabase(config.get("database_file", "/var/lib/media_sanitizer/processed.db"))
+
+        # Create a watcher and organizer for each watch directory
+        self.watch_configs = []
         for watch_config in config.get("watch_directories", []):
             watcher = MovieWatcher(
                 watch_dir=watch_config["source"],
@@ -47,8 +52,13 @@ class MediaSanitizer:
                 min_size_mb=config.get("min_file_size_mb", 100),
                 settle_time=config.get("settle_time", 30),
             )
-            self.watchers.append({
+            organizer = MovieOrganizer(
+                destination_dir=watch_config["destination"],
+                subtitle_extensions=config.get("subtitle_extensions", [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"]),
+            )
+            self.watch_configs.append({
                 "watcher": watcher,
+                "organizer": organizer,
                 "source": watch_config["source"],
                 "destination": watch_config["destination"],
                 "media_type": watch_config.get("media_type", "unknown"),
@@ -58,14 +68,14 @@ class MediaSanitizer:
         """Start the sanitizer service main loop."""
         self.running = True
         logger.info("=" * 60)
-        logger.info("Media Sanitizer starting")
-        for w in self.watchers:
-            logger.info("Watching: %s -> %s", w["source"], w["destination"])
+        logger.info("Media Sanitizer starting (with full TMDb metadata)")
+        for w in self.watch_configs:
+            logger.info("Watching: %s -> %s (%s)", w["source"], w["destination"], w["media_type"])
         logger.info("Scan interval: %d seconds", self.config.get("scan_interval", 60))
         logger.info("=" * 60)
 
         # Validate and create directories
-        for w in self.watchers:
+        for w in self.watch_configs:
             if not os.path.isdir(w["source"]):
                 logger.info("Creating watch directory: %s", w["source"])
                 os.makedirs(w["source"], exist_ok=True)
@@ -73,7 +83,7 @@ class MediaSanitizer:
 
         # Initial scan to populate known entries
         logger.info("Performing initial scan to detect existing files...")
-        for w in self.watchers:
+        for w in self.watch_configs:
             existing = w["watcher"].scan()
             logger.info("Found %d existing entries in %s (will not reprocess)",
                        len(existing), w["source"])
@@ -101,7 +111,7 @@ class MediaSanitizer:
 
     def _scan_and_process(self):
         """Run one scan cycle: detect new entries and process them."""
-        for w in self.watchers:
+        for w in self.watch_configs:
             if not self.running:
                 break
 
@@ -112,20 +122,25 @@ class MediaSanitizer:
                     break
                 self._process_entry(entry_path, w)
 
-    def _process_entry(self, entry_path, watcher_config):
-        """Process a single new file or folder.
+    def _process_entry(self, entry_path, watch_config):
+        """Process a single new file or folder with full TMDb metadata.
 
         Args:
             entry_path: Path to the new entry in the watch directory.
-            watcher_config: dict with watcher, source, destination keys.
+            watch_config: dict with watcher, organizer, source, destination keys.
         """
         entry_name = os.path.basename(entry_path)
-        watcher = watcher_config["watcher"]
-        destination = watcher_config["destination"]
-        media_type = watcher_config["media_type"]
+        watcher = watch_config["watcher"]
+        organizer = watch_config["organizer"]
+        media_type = watch_config["media_type"]
 
         logger.info("-" * 50)
         logger.info("New %s entry detected: %s", media_type, entry_name)
+
+        # Check if already processed
+        if self.db.is_processed(entry_path):
+            logger.info("Already processed, skipping: %s", entry_name)
+            return
 
         # Validate entry and find main video file
         video_path = watcher.validate_entry(entry_path)
@@ -138,84 +153,55 @@ class MediaSanitizer:
             logger.warning("File not stable, skipping: %s", entry_name)
             return
 
-        # Parse and sanitize filename
+        # Parse filename
         parse_name = entry_name if os.path.isdir(entry_path) else os.path.basename(video_path)
         parsed = parse_movie_filename(parse_name)
         logger.info("Parsed: title='%s', year=%s", parsed["title"], parsed["year"])
 
-        # Build sanitized filename
-        _, ext = os.path.splitext(video_path)
-        if parsed["year"]:
-            sanitized_name = f"{parsed['title']} ({parsed['year']}){ext}"
-        else:
-            sanitized_name = f"{parsed['title']}{ext}"
+        # Search TMDb for metadata
+        logger.info("Searching TMDb for: %s (%s)", parsed["title"], parsed["year"])
+        movie_data = self.tmdb.get_full_movie_info(parsed["title"], parsed["year"])
 
-        sanitized_name = _sanitize_filename(sanitized_name)
-        dest_path = os.path.join(destination, sanitized_name)
-
-        # Handle name conflicts
-        if os.path.exists(dest_path):
-            base, ext = os.path.splitext(sanitized_name)
-            counter = 1
-            while os.path.exists(dest_path):
-                sanitized_name = f"{base} ({counter}){ext}"
-                dest_path = os.path.join(destination, sanitized_name)
-                counter += 1
-
-        # Move the file
-        try:
-            logger.info("Moving: %s -> %s", os.path.basename(video_path), dest_path)
-            shutil.move(video_path, dest_path)
-            logger.info("SUCCESS: Moved to %s", dest_path)
-
-            # Clean up source directory if it was a folder
-            if os.path.isdir(entry_path):
-                self._cleanup_source(entry_path)
-            elif os.path.exists(entry_path) and entry_path != video_path:
-                # entry_path was the video file itself, already moved
-                pass
-
-            logger.info("SUCCESS: %s sanitized and moved", entry_name)
-
-        except Exception as e:
-            logger.exception("Failed to move %s: %s", entry_name, e)
-
-    def _cleanup_source(self, source_dir):
-        """Remove source directory after moving video file.
-
-        Args:
-            source_dir: Path to the source directory to clean up.
-        """
-        # Check if directory still exists
-        if not os.path.isdir(source_dir):
+        if not movie_data:
+            logger.warning("No TMDb match found for: %s", parsed["title"])
+            self.db.mark_processed(entry_path, status="failed")
             return
 
-        # Remove remaining files (subtitles, nfo, samples, etc.)
-        try:
-            for entry in os.listdir(source_dir):
-                full_path = os.path.join(source_dir, entry)
-                if os.path.isfile(full_path):
-                    os.remove(full_path)
-                    logger.debug("Removed leftover file: %s", entry)
-                elif os.path.isdir(full_path):
-                    shutil.rmtree(full_path)
-                    logger.debug("Removed leftover directory: %s", entry)
+        logger.info("TMDb match: %s (%s) [ID: %s]",
+                   movie_data["title"], movie_data["year"], movie_data["tmdb_id"])
 
-            # Remove the now-empty directory
-            os.rmdir(source_dir)
-            logger.info("Cleaned up source directory: %s", source_dir)
+        # Organize the movie (creates folder, moves files, downloads artwork, creates NFO)
+        dest_folder = organizer.organize(
+            video_path=video_path,
+            source_entry=entry_path,
+            movie_data=movie_data,
+            parsed_info=parsed,
+        )
 
-        except Exception as e:
-            logger.warning("Could not fully clean up %s: %s", source_dir, e)
+        if dest_folder:
+            self.db.mark_processed(
+                source_path=entry_path,
+                dest_path=dest_folder,
+                title=movie_data["title"],
+                year=movie_data.get("year"),
+                tmdb_id=movie_data.get("tmdb_id"),
+                status="success",
+            )
+            logger.info("SUCCESS: %s -> %s", entry_name, dest_folder)
+        else:
+            self.db.mark_processed(entry_path, status="failed")
+            logger.error("FAILED: %s", entry_name)
 
     def process_existing(self):
         """Process all existing files in watch directories."""
-        for w in self.watchers:
+        for w in self.watch_configs:
             source = w["source"]
             if not os.path.isdir(source):
                 continue
 
             logger.info("Processing existing files in: %s", source)
             for entry in sorted(os.listdir(source)):
+                if not self.running:
+                    break
                 entry_path = os.path.join(source, entry)
                 self._process_entry(entry_path, w)

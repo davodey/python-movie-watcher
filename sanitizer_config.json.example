@@ -1,4 +1,5 @@
 {
+    "tmdb_api_key": "YOUR_TMDB_API_KEY_HERE",
     "watch_directories": [
         {
             "source": "/mnt/media/torrents/complete/tv",
@@ -15,5 +16,7 @@
     "min_file_size_mb": 100,
     "scan_interval": 60,
     "log_file": "/var/log/media_sanitizer.log",
-    "video_extensions": [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".flv", ".mov", ".ts"]
+    "database_file": "/var/lib/media_sanitizer/processed.db",
+    "video_extensions": [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".flv", ".mov", ".ts"],
+    "subtitle_extensions": [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"]
 }
