@@ -266,7 +266,7 @@ class JellyfinOrganizer:
             return
 
         logger.info("TMDb match: %s (%s) [ID: %s]",
-                    show_data["title"], show_data["year"], show_data["tmdb_id"])
+                    show_data["show_name"], show_data["year"], show_data["tmdb_id"])
 
         # Process each video file
         success_count = 0
@@ -313,7 +313,7 @@ class JellyfinOrganizer:
             self.db.mark_processed(
                 source_path=entry_path,
                 dest_path=self.config["tv_destination_directory"],
-                title=show_data["title"],
+                title=show_data["show_name"],
                 year=show_data.get("year"),
                 tmdb_id=show_data.get("tmdb_id"),
                 status="success",
