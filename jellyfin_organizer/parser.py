@@ -45,10 +45,30 @@ STRIP_PATTERNS = [
 # Year pattern: 4 digits that look like a year (1900-2099)
 YEAR_PATTERN = re.compile(r'[\.\s\(]?((?:19|20)\d{2})[\.\s\)]?')
 
-# TV show episode pattern: S01E01, S1E1, 1x01, etc.
+# TV show episode pattern: S01E01, S1E1, S01.E01, 1x01, etc.
 TV_EPISODE_PATTERN = re.compile(
-    r'[.\s_-]*[Ss](\d{1,2})[Ee](\d{1,2})(?:[Ee]\d{1,2})?'  # S01E01 or S01E01E02
-    r'|[.\s_-]*(\d{1,2})[xX](\d{1,2})',  # 1x01 format
+    r'[.\s_-]*[Ss](\d{1,2})[.\s_-]*[Ee](\d{1,3})(?:[.\s_-]*[Ee]\d{1,3})?'  # S01E01, S01.E01, or S01E01E02
+    r'|[.\s_-]*(\d{1,2})[xX](\d{1,3})',  # 1x01 format
+    re.IGNORECASE
+)
+
+# Quality/release tags in brackets to strip early (before parsing)
+BRACKET_QUALITY_PATTERN = re.compile(
+    r'[\[\(](?:'
+    r'2160p?|1080p?|720p?|480p?|4K|UHD|'  # Resolution
+    r'BluRay|Blu-Ray|BDRip|BRRip|WEB-?DL|WEBRip|HDTV|HDRip|DVDRip|REMUX|'  # Source
+    r'x264|x265|H\.?264|H\.?265|HEVC|AVC|10bit|'  # Codec
+    r'AAC|AC3|DTS|TrueHD|Atmos|DD5\.1|DD7\.1|5\.1|7\.1|'  # Audio
+    r'YTS\.?(?:MX|LT|AM)?|RARBG|YIFY|Tigole|QxR|SPARKS|FGT|EVO|'  # Release groups
+    r'HDR(?:10)?|DV|Dolby\.?Vision|'  # HDR
+    r'EXTENDED|REMASTERED|UNCUT|PROPER|REPACK|DUAL|MULTI'  # Tags
+    r')[^\]\)]*[\]\)]',
+    re.IGNORECASE
+)
+
+# "Season X" redundancy pattern (when followed by SXX or standalone)
+SEASON_REDUNDANCY_PATTERN = re.compile(
+    r'\bSeason\s*(\d{1,2})\s*(?=[Ss]\1)',  # "Season 2 S02" -> remove "Season 2 "
     re.IGNORECASE
 )
 
@@ -130,8 +150,14 @@ def parse_tv_filename(filename):
     # Replace dots and underscores with spaces
     name = name.replace('.', ' ').replace('_', ' ')
 
+    # Strip quality tags in brackets early (1080p), [BluRay], [YTS.MX], etc.
+    name = BRACKET_QUALITY_PATTERN.sub(' ', name)
+
     # Strip leading website tags
     name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+
+    # Handle "Season X SXX" redundancy (e.g., "Season 2 S02E01" -> "S02E01")
+    name = SEASON_REDUNDANCY_PATTERN.sub('', name)
 
     # Find and extract season/episode info
     season = None
@@ -148,8 +174,19 @@ def parse_tv_filename(filename):
             season = int(ep_match.group(3))
             episode = int(ep_match.group(4))
 
-        # Truncate name at the episode pattern
-        name = name[:ep_match.start()]
+        # Check if episode pattern is at the start (S00E45 - Show Name format)
+        # Allow for leading whitespace/separators
+        match_start = ep_match.start()
+        prefix = name[:match_start].strip()
+
+        if not prefix or prefix in ['-', '–', '—']:
+            # Episode info at the start - extract show name from after the pattern
+            after_ep = name[ep_match.end():].strip()
+            # Remove leading separator (dash, colon, etc.)
+            name = re.sub(r'^[\s\-–—:]+', '', after_ep)
+        else:
+            # Normal format - truncate name at the episode pattern
+            name = name[:ep_match.start()]
 
     # Apply strip patterns
     for pattern in STRIP_PATTERNS:
