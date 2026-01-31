@@ -286,7 +286,7 @@ class JellyfinOrganizer:
             # Get episode metadata
             episode_data = None
             if ep_parsed.get("episode"):
-                episode_data = self.tmdb.get_full_episode_info(
+                episode_data = self.tmdb.get_tv_episode_details(
                     show_data["tmdb_id"],
                     ep_parsed["season"],
                     ep_parsed["episode"],
