@@ -169,3 +169,142 @@ def _sanitize_filename(name):
     # Remove leading/trailing dots and spaces
     name = name.strip(". ")
     return name
+
+
+class TVOrganizer:
+    """Handles organizing TV show files into the destination library."""
+
+    def __init__(self, destination_dir, subtitle_extensions):
+        """
+        Args:
+            destination_dir: Base destination directory for organized TV shows.
+            subtitle_extensions: List of subtitle file extensions.
+        """
+        self.destination_dir = destination_dir
+        self.subtitle_extensions = subtitle_extensions
+
+    def organize(self, video_path, source_entry, tv_data, parsed_info):
+        """Organize a TV episode file into the destination library.
+
+        Creates structure: Show Name/Season XX/Show Name - SxxExx - Episode Title.ext
+
+        Args:
+            video_path: Path to the main video file.
+            source_entry: Path to the original source entry (file or folder).
+            tv_data: TMDb TV metadata dict.
+            parsed_info: Parsed filename info dict.
+
+        Returns:
+            str or None: Destination folder path on success, None on failure.
+        """
+        show_name = tv_data.get("show_name", parsed_info.get("show_name", "Unknown Show"))
+        show_name = _sanitize_filename(show_name)
+
+        season = parsed_info.get("season") or 1
+        episode = parsed_info.get("episode") or 1
+
+        # Create show folder
+        show_folder = os.path.join(self.destination_dir, show_name)
+
+        # Create season folder
+        season_folder = os.path.join(show_folder, f"Season {season:02d}")
+
+        try:
+            return self._do_organize(
+                video_path, source_entry, show_folder, season_folder,
+                tv_data, parsed_info, show_name, season, episode
+            )
+        except Exception:
+            logger.exception("TV organization failed, attempting rollback")
+            # Only rollback the season folder if it was just created
+            if os.path.exists(season_folder) and not os.listdir(season_folder):
+                self._rollback(season_folder)
+            return None
+
+    def _do_organize(self, video_path, source_entry, show_folder, season_folder,
+                     tv_data, parsed_info, show_name, season, episode):
+        """Perform the actual TV organization."""
+        # Create folders
+        os.makedirs(season_folder, exist_ok=True)
+        logger.info("Created destination: %s", season_folder)
+
+        # Build episode filename: Show Name - S01E01 - Episode Title.ext
+        video_ext = os.path.splitext(video_path)[1]
+        episode_title = tv_data.get("episode_title", "")
+
+        if episode_title:
+            episode_title = _sanitize_filename(episode_title)
+            video_filename = f"{show_name} - S{season:02d}E{episode:02d} - {episode_title}{video_ext}"
+        else:
+            video_filename = f"{show_name} - S{season:02d}E{episode:02d}{video_ext}"
+
+        dest_video = os.path.join(season_folder, video_filename)
+
+        # Handle conflicts
+        if os.path.exists(dest_video):
+            timestamp = int(time.time())
+            base = os.path.splitext(video_filename)[0]
+            video_filename = f"{base}_{timestamp}{video_ext}"
+            dest_video = os.path.join(season_folder, video_filename)
+
+        # Move video file
+        logger.info("Moving video: %s -> %s", video_path, dest_video)
+        shutil.move(video_path, dest_video)
+
+        # Move subtitle files if source is a directory
+        if os.path.isdir(source_entry):
+            subtitles = find_subtitle_files(source_entry, self.subtitle_extensions)
+            for sub_path in subtitles:
+                sub_dest = os.path.join(season_folder, os.path.basename(sub_path))
+                logger.info("Moving subtitle: %s -> %s", sub_path, sub_dest)
+                shutil.move(sub_path, sub_dest)
+
+        # Download show artwork to show folder (not season folder)
+        self._download_show_artwork(tv_data, show_folder)
+
+        # Clean up empty source directory
+        if os.path.isdir(source_entry):
+            self._cleanup_source(source_entry)
+
+        logger.info("TV organization complete: %s", dest_video)
+        return season_folder
+
+    def _download_show_artwork(self, tv_data, show_folder):
+        """Download poster and backdrop for the show."""
+        from .artwork import download_movie_artwork
+
+        # Reuse the movie artwork function - it works with any dict that has poster_url/backdrop_url
+        art_results = download_movie_artwork(tv_data, show_folder)
+
+        if art_results["poster"]:
+            logger.info("Show poster downloaded successfully")
+        if art_results["backdrop"]:
+            logger.info("Show backdrop downloaded successfully")
+
+    def _cleanup_source(self, source_dir):
+        """Remove the source directory if it's empty or only has junk files."""
+        try:
+            remaining = os.listdir(source_dir)
+            junk_extensions = {".txt", ".nfo", ".jpg", ".jpeg", ".png", ".url", ".html", ".exe"}
+            all_junk = all(
+                os.path.splitext(f)[1].lower() in junk_extensions
+                for f in remaining
+                if os.path.isfile(os.path.join(source_dir, f))
+            )
+
+            if not remaining or all_junk:
+                shutil.rmtree(source_dir)
+                logger.info("Removed source directory: %s", source_dir)
+            else:
+                logger.info("Source directory not empty, keeping: %s", source_dir)
+        except Exception:
+            logger.exception("Failed to clean up source directory: %s", source_dir)
+
+    def _rollback(self, dest_folder):
+        """Remove partially created destination on failure."""
+        if os.path.exists(dest_folder):
+            try:
+                shutil.rmtree(dest_folder)
+                logger.info("Rolled back: %s", dest_folder)
+            except Exception:
+                logger.exception("Rollback failed for: %s", dest_folder)
