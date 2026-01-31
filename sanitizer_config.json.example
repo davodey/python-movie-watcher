@@ -1,0 +1,19 @@
+{
+    "watch_directories": [
+        {
+            "source": "/mnt/media/torrents/complete/tv",
+            "destination": "/mnt/media/sanatize/tv",
+            "media_type": "tv"
+        },
+        {
+            "source": "/mnt/media/torrents/complete/movies",
+            "destination": "/mnt/media/sanatize/movies",
+            "media_type": "movies"
+        }
+    ],
+    "settle_time": 30,
+    "min_file_size_mb": 100,
+    "scan_interval": 60,
+    "log_file": "/var/log/media_sanitizer.log",
+    "video_extensions": [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".flv", ".mov", ".ts"]
+}
