@@ -1,0 +1,35 @@
+[Unit]
+Description=Media Sanitizer with TMDb Metadata + n8n AI Enrichment
+Documentation=https://github.com/davodey/python-movie-watcher
+After=network.target
+
+[Service]
+Type=simple
+User=david
+Group=media
+WorkingDirectory=/opt/media-sanitizer
+ExecStart=/usr/bin/python3 -m jellyfin_organizer.sanitizer_main -c /opt/media-sanitizer/sanitizer_config.json
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Performance
+Nice=10
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+# Allow access to media directories (customize these paths)
+ReadWritePaths=/mnt/media/torrents/complete/movies
+ReadWritePaths=/mnt/media/torrents/complete/tv
+ReadWritePaths=/mnt/media/sanatize/movies
+ReadWritePaths=/mnt/media/sanatize/tv
+ReadWritePaths=/opt/media-sanitizer
+ReadWritePaths=/var/log
+
+[Install]
+WantedBy=multi-user.target

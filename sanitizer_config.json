@@ -1,17 +1,34 @@
 {
-    "tmdb_api_key": "d7b13f4d3b8ba72fe01857d8023874d0",
-    "watch_directories": [
-        {
-            "source": "/mnt/media/torrents/complete/tv",
-            "destination": "/mnt/media/sanatize/tv",
-            "media_type": "tv"
-        },
-        {
-            "source": "/mnt/media/torrents/complete/movies",
-            "destination": "/mnt/media/sanatize/movies",
-            "media_type": "movies"
-        }
-    ],
-    "database_file": "./sanitizer_processed.db",
-    "log_file": "./media_sanitizer.log"
+  "tmdb_api_key": "YOUR_TMDB_API_KEY",
+  "n8n_webhook_url": "http://localhost:5678/webhook/enrich-metadata",
+
+  "watch_folders": {
+    "movies": "/mnt/media/torrents/complete/movies",
+    "tv": "/mnt/media/torrents/complete/tv"
+  },
+
+  "output_folders": {
+    "movies": "/mnt/media/sanatize/movies",
+    "tv": "/mnt/media/sanatize/tv"
+  },
+
+  "watch_interval": 60,
+  "database_path": "./sanitizer.db",
+  "log_file": "./sanitizer.log",
+
+  "tmdb_options": {
+    "include_adult": false,
+    "language": "en-US",
+    "image_base_url": "https://image.tmdb.org/t/p/original"
+  },
+
+  "n8n_options": {
+    "timeout": 30,
+    "retry_count": 3
+  },
+
+  "file_extensions": [".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".mov"],
+  "subtitle_extensions": [".srt", ".sub", ".ass", ".ssa", ".vtt", ".idx"],
+  "min_file_size_mb": 100,
+  "settle_time": 30
 }

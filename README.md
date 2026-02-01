@@ -1,164 +1,226 @@
-# Jellyfin Auto-Organizer
+# Media Sanitizer
 
-Automatically transforms torrent movie downloads into perfectly organized Jellyfin library entries with complete metadata, artwork, and zero manual intervention.
+Comprehensive media organization with **complete TMDb metadata** and **n8n AI enrichment**.
+
+Transform torrent downloads into perfectly organized, AI-enriched Jellyfin library entries.
+
+## Features
+
+- **Complete TMDb Metadata**: Fetches ALL metadata in single API calls including credits, keywords, images, collections, trailers, and more
+- **n8n AI Enrichment**: Sends metadata to n8n webhook for OpenAI-powered content analysis
+- **Family-Friendly Descriptions**: AI-generated descriptions tailored for family viewing
+- **Content Warnings**: Automatic violence, language, and maturity ratings
+- **Collection Tracking**: Tracks movie collections (MCU, Star Wars, etc.) for playlist generation
+- **Quality-Based Upgrades**: Automatically replaces lower quality versions with upgrades
+- **Movies + TV Shows**: Full support for both media types
 
 ## What It Does
 
-1. **Watches** a download directory for new movie files/folders
-2. **Parses** torrent filenames to extract the movie title and year
-3. **Fetches** complete metadata from TMDb (The Movie Database)
-4. **Moves** the video file into an organized library structure
-5. **Creates** Jellyfin/Kodi/Emby compatible NFO metadata files
-6. **Downloads** poster and backdrop artwork
+1. **Watches** download directories for new movies and TV shows
+2. **Parses** torrent filenames (title, year, quality, source)
+3. **Fetches** COMPLETE TMDb metadata (cast, keywords, images, collections, trailers)
+4. **Enriches** with AI via n8n webhook (content warnings, age recommendations, tags)
+5. **Creates** Jellyfin/Kodi/Emby compatible NFO files with all metadata
+6. **Downloads** high-quality poster and backdrop artwork
+7. **Organizes** into clean folder structure
+8. **Tracks** in SQLite to prevent re-processing
 
 ### Before
 ```
 /torrents/complete/movies/
-  Movie.Name.2024.1080p.WEB-DL.x264-GROUP.mkv
+  The.Avengers.2012.1080p.BluRay.x264-SPARKS.mkv
 ```
 
 ### After
 ```
 /media/movies/
-  Movie.Name.2024.1080p.WEB-DL.x264-GROUP/
-    Movie Name.2024.mkv
-    Movie Name.2024.nfo
+  The Avengers (2012)/
+    The Avengers (2012) [1080p Bluray].mkv
+    The Avengers (2012).nfo           # Full metadata + AI content warnings
     poster.jpg
-    backdrop.jpg
+    fanart.jpg
 ```
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
+# 1. Clone and install
 git clone https://github.com/davodey/python-movie-watcher.git
 cd python-movie-watcher
+./install.sh
 
-# 2. Run setup (creates config, installs dependencies)
-./setup.sh
+# 2. Edit configuration
+nano sanitizer_config.json
 
-# 3. Install as a system service
-sudo ./install_service.sh
-
-# 4. Start the service
-sudo systemctl start jellyfin-organizer
+# 3. Run
+python3 -m jellyfin_organizer.sanitizer_main -c sanitizer_config.json
 ```
 
 ## Requirements
 
-- Python 3.7+
-- `requests` library (installed by setup.sh)
-- TMDb API key (free at https://www.themoviedb.org/settings/api)
+- **Python 3.10+**
+- **requests** library
+- **TMDb API key** (free at https://www.themoviedb.org/settings/api)
+- **n8n** (optional, for AI enrichment at http://localhost:5678)
 
 ## Configuration
 
-Configuration is stored in `config.json`. Created automatically by `setup.sh`, or copy from `config.json.example`.
+Edit `sanitizer_config.json`:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `tmdb_api_key` | - | Your TMDb API key (required) |
-| `watch_directory` | `/media/david/MEDIA/torrents/complete/movies` | Directory to monitor for new downloads |
-| `destination_directory` | `/media/david/MEDIA/media/movies` | Organized library output directory |
-| `settle_time` | `30` | Seconds to wait for downloads to complete |
-| `min_file_size_mb` | `100` | Minimum file size to process (filters samples) |
-| `scan_interval` | `60` | Seconds between directory scans |
-| `log_file` | `/var/log/jellyfin_organizer.log` | Log file path |
-| `database_file` | `/var/lib/jellyfin_organizer/processed.db` | SQLite database path |
-| `video_extensions` | `.mkv,.mp4,.avi,...` | Video file extensions to recognize |
-| `subtitle_extensions` | `.srt,.sub,.ass,...` | Subtitle extensions to preserve |
+```json
+{
+  "tmdb_api_key": "YOUR_TMDB_API_KEY",
+  "n8n_webhook_url": "http://localhost:5678/webhook/enrich-metadata",
+
+  "watch_folders": {
+    "movies": "/mnt/media/torrents/complete/movies",
+    "tv": "/mnt/media/torrents/complete/tv"
+  },
+
+  "output_folders": {
+    "movies": "/mnt/media/sanatize/movies",
+    "tv": "/mnt/media/sanatize/tv"
+  },
+
+  "watch_interval": 60,
+  "min_file_size_mb": 100
+}
+```
 
 ## Usage
 
-### As a Service (recommended)
+### Run as Service (Recommended)
 
 ```bash
-sudo systemctl start jellyfin-organizer    # Start
-sudo systemctl stop jellyfin-organizer     # Stop
-sudo systemctl status jellyfin-organizer   # Status
-sudo journalctl -u jellyfin-organizer -f   # Follow logs
+# Install systemd service
+sudo cp media-sanitizer.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable media-sanitizer
+sudo systemctl start media-sanitizer
+
+# View logs
+sudo journalctl -u media-sanitizer -f
 ```
 
-### Manual Run
+### Run Manually
 
 ```bash
-# Run in service mode (continuous monitoring)
-python3 -m jellyfin_organizer.main
+# Continuous monitoring
+python3 -m jellyfin_organizer.sanitizer_main
 
-# Process a single file or folder
-python3 -m jellyfin_organizer.main --process /path/to/movie.mkv
+# Process existing files
+python3 -m jellyfin_organizer.sanitizer_main --scan-existing
 
-# Process all existing files on startup
-python3 -m jellyfin_organizer.main --scan-existing
+# Process single file
+python3 -m jellyfin_organizer.sanitizer_main --process /path/to/movie.mkv
 
-# Use a specific config file
-python3 -m jellyfin_organizer.main -c /path/to/config.json
+# Show statistics
+python3 -m jellyfin_organizer.sanitizer_main --stats
+
+# Retry failed entries
+python3 -m jellyfin_organizer.sanitizer_main --retry-failed
 ```
+
+## TMDb Metadata (COMPLETE)
+
+Fetches ALL metadata in single API calls using `append_to_response`:
+
+- **Basic**: Title, year, overview, tagline, runtime, budget, revenue
+- **Certification**: MPAA rating (G, PG, PG-13, R, etc.)
+- **Collection**: Movie collection info (e.g., "The Avengers Collection")
+- **Cast**: Top 10 actors with character names and photos
+- **Crew**: Director, writer, composer
+- **Keywords**: All TMDb keywords for filtering
+- **Images**: Best poster, backdrop, and logo (by vote average)
+- **Trailer**: YouTube trailer key
+- **Similar**: Related movie/show IDs
+
+## n8n AI Enrichment
+
+When configured, sends metadata to n8n webhook which returns:
+
+```json
+{
+  "success": true,
+  "family_description": "AI-rewritten family-friendly description",
+  "content_warnings": {
+    "violence": "Moderate: Stylized action sequences",
+    "language": "Mild: Infrequent mild profanity",
+    "scary_content": "Mild: Intense action scenes",
+    "mature_themes": "None"
+  },
+  "age_recommendation": "Ages 10+",
+  "custom_tags": ["superhero", "action-packed", "team-up"],
+  "similar_titles": ["Iron Man", "Captain America"]
+}
+```
+
+## NFO Files
+
+Generated NFO files include:
+
+- All TMDb metadata (title, year, plot, ratings, genres, cast, crew)
+- AI content warnings as tags for Jellyfin filtering
+- Age recommendations
+- Collection information
+- Keywords and custom tags
+- Poster, backdrop, and fanart URLs
+- YouTube trailer links
+- Similar title suggestions
+
+## Database Schema
+
+SQLite database tracks:
+
+- **processed_files**: Files processed with TMDb IDs and quality scores
+- **metadata_cache**: Cached TMDb responses (24-hour expiry)
+- **collections**: Movie collection membership for playlists
+- **enrichment_log**: AI enrichment history
+
+## Quality Scoring
+
+Automatically scores and compares quality:
+
+| Source | Score | Resolution | Score | HDR | Bonus |
+|--------|-------|------------|-------|-----|-------|
+| REMUX | 100 | 2160p/4K | 40 | Dolby Vision | 15 |
+| BluRay | 90 | 1080p | 30 | HDR10+ | 12 |
+| WEB-DL | 75 | 720p | 20 | HDR10 | 10 |
+| HDTV | 60 | 480p | 10 | HDR | 8 |
 
 ## Project Structure
 
 ```
 python-movie-watcher/
   jellyfin_organizer/
-    __init__.py       - Package init
-    __main__.py       - Module entry point
-    main.py           - Service orchestration and CLI
-    config.py         - Configuration loading
-    parser.py         - Torrent filename parsing
-    tmdb.py           - TMDb API client
-    metadata.py       - NFO XML file generation
-    artwork.py        - Poster/backdrop downloading
-    organizer.py      - File moving and organization
-    database.py       - SQLite processed file tracking
-    watcher.py        - Directory monitoring
-  config.json.example - Example configuration
-  setup.sh            - Interactive setup script
-  install_service.sh  - systemd service installer
-  requirements.txt    - Python dependencies
+    __init__.py           - Package init
+    sanitizer_main.py     - Main orchestrator with AI enrichment
+    tmdb.py               - Complete TMDb API client
+    enricher.py           - n8n webhook integration
+    metadata.py           - NFO file generation with AI data
+    parser.py             - Filename parsing with quality scoring
+    database.py           - SQLite with cache and collections
+    watcher.py            - Directory monitoring
+    organizer.py          - File organization
+    artwork.py            - Image downloading
+    config.py             - Configuration loading
+  sanitizer_config.json   - Configuration file
+  install.sh              - Installation script
+  media-sanitizer.service - systemd service
+  requirements.txt        - Python dependencies
 ```
-
-## NFO Metadata
-
-Generated NFO files are compatible with Jellyfin, Kodi, and Emby. They include:
-
-- Title, original title, year, release date, runtime
-- TMDb rating with vote count
-- Plot summary and tagline
-- TMDb and IMDb IDs
-- Genres, studios, production countries
-- Full cast (top 15) with character names and photo URLs
-- Directors and writers
-- YouTube trailer link
-
-## Filename Parsing
-
-The parser strips common torrent artifacts from filenames:
-
-- Resolution: `1080p`, `2160p`, `720p`, `4K`, `UHD`
-- Source: `WEB-DL`, `BluRay`, `WEBRip`, `HDTV`, `REMUX`
-- Codec: `x264`, `x265`, `HEVC`, `AV1`, `10bit`
-- Audio: `AAC`, `DTS`, `TrueHD`, `Atmos`, `5.1`, `7.1`
-- Release groups: `YTS.MX`, `RARBG`, `Tigole`, etc.
-- Bracketed tags: `[UNCUT]`, `[REMASTERED]`, etc.
-- Website tags: `www.site.org`
-
-## Safety Features
-
-- **Atomic operations**: Files are fully organized or rolled back on failure
-- **No re-encoding**: Original video files are never modified
-- **Duplicate prevention**: SQLite database tracks processed files
-- **Stability check**: Waits for downloads to finish before processing
-- **Size filter**: Ignores sample files under 100MB
-- **Auto-restart**: systemd restarts the service on crash
-- **Rate limiting**: Respects TMDb API limits
 
 ## Logs
 
-```bash
-# View log file
-tail -f /var/log/jellyfin_organizer.log
-
-# View systemd journal
-sudo journalctl -u jellyfin-organizer -f
+```
+2026-01-31 19:30:00 [INFO] Starting media sanitizer...
+2026-01-31 19:30:05 [INFO] Found new file: The.Avengers.2012.1080p.BluRay.mkv
+2026-01-31 19:30:06 [INFO] TMDb match: The Avengers (2012) [ID: 24428]
+2026-01-31 19:30:07 [INFO] Metadata: cast=10, keywords=25, collection=The Avengers Collection
+2026-01-31 19:30:08 [INFO] Sending to n8n for AI enrichment...
+2026-01-31 19:30:15 [INFO] AI enrichment complete (age: 10+, tags: 4)
+2026-01-31 19:30:16 [INFO] Created NFO: The Avengers (2012).nfo
+2026-01-31 19:30:18 [SUCCESS] Processed: The Avengers (2012)
 ```
 
 ## License

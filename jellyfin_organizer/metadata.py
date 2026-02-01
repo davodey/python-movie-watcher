@@ -1,370 +1,537 @@
-"""NFO metadata file creation for Jellyfin/Kodi/Emby."""
+"""Enhanced NFO metadata file creation for Jellyfin/Kodi/Emby with AI enrichment support."""
 
 import logging
 import os
+import time
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
 
-def create_nfo_content(movie_data):
-    """Create NFO XML content from movie metadata.
-
-    Args:
-        movie_data: dict with movie metadata from TMDb.
-
-    Returns:
-        str: XML string for the NFO file.
-    """
-    root = ET.Element("movie")
-
-    _add_text_element(root, "title", movie_data.get("title", ""))
-
-    original_title = movie_data.get("original_title", "")
-    if original_title and original_title != movie_data.get("title"):
-        _add_text_element(root, "originaltitle", original_title)
-
-    if movie_data.get("year"):
-        _add_text_element(root, "year", str(movie_data["year"]))
-
-    if movie_data.get("premiered"):
-        _add_text_element(root, "premiered", movie_data["premiered"])
-
-    if movie_data.get("runtime"):
-        _add_text_element(root, "runtime", str(movie_data["runtime"]))
-
-    # Ratings block
-    if movie_data.get("rating") is not None:
-        ratings_el = ET.SubElement(root, "ratings")
-        rating_el = ET.SubElement(ratings_el, "rating", {
-            "name": "tmdb",
-            "max": "10",
-            "default": "true",
-        })
-        _add_text_element(rating_el, "value", str(movie_data["rating"]))
-        if movie_data.get("votes") is not None:
-            _add_text_element(rating_el, "votes", str(movie_data["votes"]))
-
-    if movie_data.get("plot"):
-        _add_text_element(root, "plot", movie_data["plot"])
-
-    if movie_data.get("tagline"):
-        _add_text_element(root, "tagline", movie_data["tagline"])
-
-    # Unique IDs
-    if movie_data.get("tmdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
-        uid.text = str(movie_data["tmdb_id"])
-
-    if movie_data.get("imdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "imdb"})
-        uid.text = movie_data["imdb_id"]
-
-    # Genres
-    for genre in movie_data.get("genres", []):
-        _add_text_element(root, "genre", genre)
-
-    # Studios
-    for studio in movie_data.get("studios", []):
-        _add_text_element(root, "studio", studio)
-
-    # Countries
-    for country in movie_data.get("countries", []):
-        _add_text_element(root, "country", country)
-
-    # Cast
-    for actor in movie_data.get("cast", []):
-        actor_el = ET.SubElement(root, "actor")
-        _add_text_element(actor_el, "name", actor.get("name", ""))
-        _add_text_element(actor_el, "role", actor.get("role", ""))
-        _add_text_element(actor_el, "order", str(actor.get("order", 0)))
-        if actor.get("thumb"):
-            _add_text_element(actor_el, "thumb", actor["thumb"])
-
-    # Directors
-    for director in movie_data.get("directors", []):
-        _add_text_element(root, "director", director)
-
-    # Writers
-    for writer in movie_data.get("writers", []):
-        _add_text_element(root, "credits", writer)
-
-    # Trailer
-    if movie_data.get("trailer"):
-        _add_text_element(root, "trailer", movie_data["trailer"])
-
-    return _prettify_xml(root)
-
-
-def write_nfo_file(filepath, movie_data):
-    """Write an NFO file for a movie.
-
-    Args:
-        filepath: Path where the .nfo file should be written.
-        movie_data: dict with movie metadata.
-
-    Returns:
-        bool: True if file was written successfully.
-    """
-    try:
-        content = create_nfo_content(movie_data)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("NFO file written: %s", filepath)
-        return True
-    except Exception:
-        logger.exception("Failed to write NFO file: %s", filepath)
-        return False
-
-
-def _add_text_element(parent, tag, text):
-    """Add a text element to an XML parent."""
-    el = ET.SubElement(parent, tag)
-    el.text = text
-    return el
-
-
-def _prettify_xml(element):
-    """Convert an XML element to a formatted string with proper indentation.
-
-    Args:
-        element: XML Element to format.
-
-    Returns:
-        str: Formatted XML string with declaration.
-    """
-    lines = ['<?xml version="1.0" encoding="utf-8"?>']
-    _indent_element(element, lines, level=0)
-    return "\n".join(lines) + "\n"
-
-
-def _indent_element(element, lines, level):
-    """Recursively build indented XML lines."""
-    indent = "  " * level
-    tag = element.tag
-    attribs = "".join(f' {k}="{v}"' for k, v in element.attrib.items())
-
-    children = list(element)
-    if children:
-        lines.append(f"{indent}<{tag}{attribs}>")
-        for child in children:
-            _indent_element(child, lines, level + 1)
-        lines.append(f"{indent}</{tag}>")
-    elif element.text:
-        # Escape XML special characters in text
-        text = _escape_xml(element.text)
-        lines.append(f"{indent}<{tag}{attribs}>{text}</{tag}>")
-    else:
-        lines.append(f"{indent}<{tag}{attribs} />")
-
-
-def _escape_xml(text):
-    """Escape XML special characters."""
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    text = text.replace('"', "&quot;")
-    return text
-
-
-# -----------------------------------------------------------------------------
-# TV Show NFO Functions
-# -----------------------------------------------------------------------------
-
-def create_tvshow_nfo_content(show_data):
-    """Create NFO XML content for a TV show (tvshow.nfo).
-
-    Args:
-        show_data: dict with TV show metadata from TMDb.
-
-    Returns:
-        str: XML string for the NFO file.
-    """
-    root = ET.Element("tvshow")
-
-    _add_text_element(root, "title", show_data.get("title", ""))
-
-    original_title = show_data.get("original_title", "")
-    if original_title and original_title != show_data.get("title"):
-        _add_text_element(root, "originaltitle", original_title)
-
-    if show_data.get("year"):
-        _add_text_element(root, "year", str(show_data["year"]))
-
-    if show_data.get("premiered"):
-        _add_text_element(root, "premiered", show_data["premiered"])
-
-    if show_data.get("status"):
-        _add_text_element(root, "status", show_data["status"])
-
-    if show_data.get("mpaa"):
-        _add_text_element(root, "mpaa", show_data["mpaa"])
-
-    # Ratings block
-    if show_data.get("rating") is not None:
-        ratings_el = ET.SubElement(root, "ratings")
-        rating_el = ET.SubElement(ratings_el, "rating", {
-            "name": "tmdb",
-            "max": "10",
-            "default": "true",
-        })
-        _add_text_element(rating_el, "value", str(show_data["rating"]))
-        if show_data.get("votes") is not None:
-            _add_text_element(rating_el, "votes", str(show_data["votes"]))
-
-    if show_data.get("plot"):
-        _add_text_element(root, "plot", show_data["plot"])
-
-    if show_data.get("tagline"):
-        _add_text_element(root, "tagline", show_data["tagline"])
-
-    # Unique IDs
-    if show_data.get("tmdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
-        uid.text = str(show_data["tmdb_id"])
-
-    if show_data.get("imdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "imdb"})
-        uid.text = show_data["imdb_id"]
-
-    if show_data.get("tvdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "tvdb"})
-        uid.text = str(show_data["tvdb_id"])
-
-    # Genres
-    for genre in show_data.get("genres", []):
-        _add_text_element(root, "genre", genre)
-
-    # Studios/Networks
-    for studio in show_data.get("studios", []):
-        _add_text_element(root, "studio", studio)
-
-    # Cast
-    for actor in show_data.get("cast", []):
-        actor_el = ET.SubElement(root, "actor")
-        _add_text_element(actor_el, "name", actor.get("name", ""))
-        _add_text_element(actor_el, "role", actor.get("role", ""))
-        _add_text_element(actor_el, "order", str(actor.get("order", 0)))
-        if actor.get("thumb"):
-            _add_text_element(actor_el, "thumb", actor["thumb"])
-
-    # Season/episode counts
-    if show_data.get("seasons"):
-        _add_text_element(root, "season", str(show_data["seasons"]))
-    if show_data.get("episodes"):
-        _add_text_element(root, "episode", str(show_data["episodes"]))
-
-    return _prettify_xml(root)
-
-
-def create_episode_nfo_content(episode_data, show_data=None):
-    """Create NFO XML content for a TV episode.
-
-    Args:
-        episode_data: dict with episode metadata from TMDb.
-        show_data: Optional dict with show metadata (for show title).
-
-    Returns:
-        str: XML string for the NFO file.
-    """
-    root = ET.Element("episodedetails")
-
-    _add_text_element(root, "title", episode_data.get("title", ""))
-
-    if show_data:
-        _add_text_element(root, "showtitle", show_data.get("title", ""))
-
-    if episode_data.get("season") is not None:
-        _add_text_element(root, "season", str(episode_data["season"]))
-
-    if episode_data.get("episode") is not None:
-        _add_text_element(root, "episode", str(episode_data["episode"]))
-
-    if episode_data.get("aired"):
-        _add_text_element(root, "aired", episode_data["aired"])
-
-    if episode_data.get("runtime"):
-        _add_text_element(root, "runtime", str(episode_data["runtime"]))
-
-    # Ratings block
-    if episode_data.get("rating") is not None:
-        ratings_el = ET.SubElement(root, "ratings")
-        rating_el = ET.SubElement(ratings_el, "rating", {
-            "name": "tmdb",
-            "max": "10",
-            "default": "true",
-        })
-        _add_text_element(rating_el, "value", str(episode_data["rating"]))
-        if episode_data.get("votes") is not None:
-            _add_text_element(rating_el, "votes", str(episode_data["votes"]))
-
-    if episode_data.get("plot"):
-        _add_text_element(root, "plot", episode_data["plot"])
-
-    # Unique IDs
-    if episode_data.get("tmdb_id"):
-        uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
-        uid.text = str(episode_data["tmdb_id"])
-
-    # Directors
-    for director in episode_data.get("directors", []):
-        _add_text_element(root, "director", director)
-
-    # Writers
-    for writer in episode_data.get("writers", []):
-        _add_text_element(root, "credits", writer)
-
-    # Guest stars
-    for actor in episode_data.get("guest_stars", []):
-        actor_el = ET.SubElement(root, "actor")
-        _add_text_element(actor_el, "name", actor.get("name", ""))
-        _add_text_element(actor_el, "role", actor.get("role", ""))
-        if actor.get("thumb"):
-            _add_text_element(actor_el, "thumb", actor["thumb"])
-
-    return _prettify_xml(root)
-
-
-def write_tvshow_nfo(show_folder, show_data):
-    """Write a tvshow.nfo file for a TV show.
-
-    Args:
-        show_folder: Path to the show's folder.
-        show_data: dict with TV show metadata.
-
-    Returns:
-        bool: True if file was written successfully.
-    """
-    filepath = os.path.join(show_folder, "tvshow.nfo")
-    try:
-        content = create_tvshow_nfo_content(show_data)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("TV show NFO written: %s", filepath)
-        return True
-    except Exception:
-        logger.exception("Failed to write TV show NFO: %s", filepath)
-        return False
-
-
-def write_episode_nfo(episode_path, episode_data, show_data=None):
-    """Write an episode NFO file.
-
-    Args:
-        episode_path: Path to the episode video file (NFO will have same name).
-        episode_data: dict with episode metadata.
-        show_data: Optional dict with show metadata.
-
-    Returns:
-        bool: True if file was written successfully.
-    """
+class NFOWriter:
+    """Creates Jellyfin-compatible NFO files with comprehensive metadata and AI enrichment."""
+
+    def create_movie_nfo(self, enriched_data: dict, output_path: str) -> bool:
+        """Create a complete movie NFO file with TMDb data and AI enrichment.
+
+        Args:
+            enriched_data: Combined TMDb and AI-enriched metadata.
+            output_path: Path where the NFO file should be written.
+
+        Returns:
+            bool: True if file was written successfully.
+        """
+        try:
+            content = self._build_movie_nfo(enriched_data)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("Movie NFO written: %s", output_path)
+            return True
+        except Exception:
+            logger.exception("Failed to write movie NFO: %s", output_path)
+            return False
+
+    def create_tvshow_nfo(self, enriched_data: dict, output_path: str) -> bool:
+        """Create a complete TV show NFO file (tvshow.nfo).
+
+        Args:
+            enriched_data: Combined TMDb and AI-enriched metadata.
+            output_path: Path where the NFO file should be written.
+
+        Returns:
+            bool: True if file was written successfully.
+        """
+        try:
+            content = self._build_tvshow_nfo(enriched_data)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("TV show NFO written: %s", output_path)
+            return True
+        except Exception:
+            logger.exception("Failed to write TV show NFO: %s", output_path)
+            return False
+
+    def create_episode_nfo(self, episode_data: dict, show_data: dict, output_path: str) -> bool:
+        """Create an episode NFO file.
+
+        Args:
+            episode_data: Episode-specific metadata.
+            show_data: Parent show metadata.
+            output_path: Path where the NFO file should be written.
+
+        Returns:
+            bool: True if file was written successfully.
+        """
+        try:
+            content = self._build_episode_nfo(episode_data, show_data)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("Episode NFO written: %s", output_path)
+            return True
+        except Exception:
+            logger.exception("Failed to write episode NFO: %s", output_path)
+            return False
+
+    def _build_movie_nfo(self, data: dict) -> str:
+        """Build complete movie NFO XML content.
+
+        Args:
+            data: Combined TMDb and AI-enriched metadata.
+
+        Returns:
+            str: Formatted XML string.
+        """
+        root = ET.Element("movie")
+
+        # Basic info
+        self._add_element(root, "title", data.get("title", ""))
+
+        original_title = data.get("original_title", "")
+        if original_title and original_title != data.get("title"):
+            self._add_element(root, "originaltitle", original_title)
+
+        if data.get("year"):
+            self._add_element(root, "year", str(data["year"]))
+
+        # Use AI family_description if available, otherwise use original description
+        plot = data.get("family_description") or data.get("description") or data.get("plot", "")
+        if plot:
+            self._add_element(root, "plot", plot)
+            # Outline is first 200 chars
+            outline = plot[:200] + "..." if len(plot) > 200 else plot
+            self._add_element(root, "outline", outline)
+
+        if data.get("tagline"):
+            self._add_element(root, "tagline", data["tagline"])
+
+        if data.get("runtime"):
+            self._add_element(root, "runtime", str(data["runtime"]))
+
+        # MPAA rating
+        if data.get("rating"):
+            self._add_element(root, "mpaa", data["rating"])
+
+        # Unique IDs
+        if data.get("tmdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
+            uid.text = str(data["tmdb_id"])
+            self._add_element(root, "tmdbid", str(data["tmdb_id"]))
+
+        if data.get("imdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "imdb"})
+            uid.text = data["imdb_id"]
+
+        # Ratings block (TMDb rating)
+        if data.get("tmdb_rating") is not None:
+            ratings_el = ET.SubElement(root, "ratings")
+            rating_el = ET.SubElement(ratings_el, "rating", {
+                "name": "tmdb",
+                "max": "10",
+                "default": "true",
+            })
+            self._add_element(rating_el, "value", str(data["tmdb_rating"]))
+            if data.get("tmdb_votes") is not None:
+                self._add_element(rating_el, "votes", str(data["tmdb_votes"]))
+
+        # Genres
+        for genre in data.get("genres", []):
+            self._add_element(root, "genre", genre)
+
+        # AI Custom Tags
+        for tag in data.get("custom_tags", []):
+            self._add_element(root, "tag", tag)
+
+        # TMDb Keywords (for advanced filtering)
+        for keyword in data.get("keywords", []):
+            self._add_element(root, "tag", keyword)
+
+        # Collection Info
+        collection = data.get("collection")
+        if collection:
+            set_el = ET.SubElement(root, "set")
+            self._add_element(set_el, "name", collection.get("name", ""))
+            if collection.get("id"):
+                self._add_element(set_el, "tmdbid", str(collection["id"]))
+
+        # Cast (top actors)
+        for actor in data.get("cast", [])[:10]:
+            actor_el = ET.SubElement(root, "actor")
+            self._add_element(actor_el, "name", actor.get("name", ""))
+            role = actor.get("character") or actor.get("role", "")
+            self._add_element(actor_el, "role", role)
+            self._add_element(actor_el, "order", str(actor.get("order", 0)))
+            if actor.get("thumb"):
+                self._add_element(actor_el, "thumb", actor["thumb"])
+
+        # Crew (directors, writers)
+        crew = data.get("crew", {})
+        if isinstance(crew, dict):
+            for director in crew.get("directors", []):
+                self._add_element(root, "director", director)
+            for writer in crew.get("writers", []):
+                self._add_element(root, "credits", writer)
+        else:
+            # Handle flat director/writer lists
+            for director in data.get("directors", []):
+                self._add_element(root, "director", director)
+            for writer in data.get("writers", []):
+                self._add_element(root, "credits", writer)
+
+        # AI Content Warnings (as tags for Jellyfin filtering)
+        content_warnings = data.get("content_warnings", {})
+        if content_warnings:
+            if content_warnings.get("violence"):
+                self._add_element(root, "tag", f"Violence: {content_warnings['violence'].split(':')[0] if ':' in content_warnings['violence'] else content_warnings['violence']}")
+            if content_warnings.get("language"):
+                self._add_element(root, "tag", f"Language: {content_warnings['language'].split(':')[0] if ':' in content_warnings['language'] else content_warnings['language']}")
+            if content_warnings.get("scary_content"):
+                self._add_element(root, "tag", f"Scary: {content_warnings['scary_content'].split(':')[0] if ':' in content_warnings['scary_content'] else content_warnings['scary_content']}")
+
+        # Age recommendation
+        if data.get("age_recommendation"):
+            self._add_element(root, "tag", f"Age: {data['age_recommendation']}")
+
+        # Images
+        images = data.get("images", {})
+        poster_url = images.get("poster") or data.get("poster_url", "")
+        backdrop_url = images.get("backdrop") or data.get("backdrop_url", "")
+        logo_url = images.get("logo", "")
+
+        if poster_url:
+            thumb = ET.SubElement(root, "thumb", {"aspect": "poster"})
+            thumb.text = poster_url
+
+        if backdrop_url:
+            thumb = ET.SubElement(root, "thumb", {"aspect": "banner"})
+            thumb.text = backdrop_url
+            fanart = ET.SubElement(root, "fanart")
+            fanart_thumb = ET.SubElement(fanart, "thumb")
+            fanart_thumb.text = backdrop_url
+
+        if logo_url:
+            thumb = ET.SubElement(root, "thumb", {"aspect": "clearlogo"})
+            thumb.text = logo_url
+
+        # Trailer (YouTube format for Kodi/Jellyfin)
+        if data.get("trailer_key"):
+            # Format: plugin://plugin.video.youtube/?action=play_video&videoid=KEY
+            trailer_url = f"plugin://plugin.video.youtube/?action=play_video&videoid={data['trailer_key']}"
+            self._add_element(root, "trailer", trailer_url)
+
+        # Production companies / Studios
+        for studio in data.get("production_companies", data.get("studios", []))[:5]:
+            self._add_element(root, "studio", studio)
+
+        # AI Similar Titles
+        for similar in data.get("similar_titles", []):
+            self._add_element(root, "similar", similar)
+
+        # Timestamps
+        self._add_element(root, "dateadded", time.strftime("%Y-%m-%dT%H:%M:%S"))
+        if data.get("enriched_at"):
+            self._add_element(root, "enriched_at", data["enriched_at"])
+
+        # Premiered date
+        if data.get("premiered"):
+            self._add_element(root, "premiered", data["premiered"])
+
+        return self._prettify_xml(root)
+
+    def _build_tvshow_nfo(self, data: dict) -> str:
+        """Build complete TV show NFO XML content.
+
+        Args:
+            data: Combined TMDb and AI-enriched metadata.
+
+        Returns:
+            str: Formatted XML string.
+        """
+        root = ET.Element("tvshow")
+
+        # Basic info
+        title = data.get("title", "") or data.get("show_name", "")
+        self._add_element(root, "title", title)
+
+        original_title = data.get("original_title", "")
+        if original_title and original_title != title:
+            self._add_element(root, "originaltitle", original_title)
+
+        if data.get("year"):
+            self._add_element(root, "year", str(data["year"]))
+
+        # Use AI family_description if available
+        plot = data.get("family_description") or data.get("description") or data.get("plot", "")
+        if plot:
+            self._add_element(root, "plot", plot)
+
+        if data.get("tagline"):
+            self._add_element(root, "tagline", data["tagline"])
+
+        if data.get("status"):
+            self._add_element(root, "status", data["status"])
+
+        # Content rating
+        if data.get("rating"):
+            self._add_element(root, "mpaa", data["rating"])
+
+        # Unique IDs
+        if data.get("tmdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
+            uid.text = str(data["tmdb_id"])
+
+        if data.get("imdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "imdb"})
+            uid.text = data["imdb_id"]
+
+        if data.get("tvdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "tvdb"})
+            uid.text = str(data["tvdb_id"])
+
+        # Ratings
+        if data.get("tmdb_rating") is not None:
+            ratings_el = ET.SubElement(root, "ratings")
+            rating_el = ET.SubElement(ratings_el, "rating", {
+                "name": "tmdb",
+                "max": "10",
+                "default": "true",
+            })
+            self._add_element(rating_el, "value", str(data["tmdb_rating"]))
+            if data.get("tmdb_votes") is not None:
+                self._add_element(rating_el, "votes", str(data["tmdb_votes"]))
+
+        # Genres
+        for genre in data.get("genres", []):
+            self._add_element(root, "genre", genre)
+
+        # AI Custom Tags
+        for tag in data.get("custom_tags", []):
+            self._add_element(root, "tag", tag)
+
+        # Keywords
+        for keyword in data.get("keywords", []):
+            self._add_element(root, "tag", keyword)
+
+        # Cast
+        for actor in data.get("cast", [])[:10]:
+            actor_el = ET.SubElement(root, "actor")
+            self._add_element(actor_el, "name", actor.get("name", ""))
+            role = actor.get("character") or actor.get("role", "")
+            self._add_element(actor_el, "role", role)
+            self._add_element(actor_el, "order", str(actor.get("order", 0)))
+            if actor.get("thumb"):
+                self._add_element(actor_el, "thumb", actor["thumb"])
+
+        # Networks/Studios
+        for network in data.get("networks", data.get("studios", [])):
+            self._add_element(root, "studio", network)
+
+        # Season/episode counts
+        if data.get("number_of_seasons"):
+            self._add_element(root, "season", str(data["number_of_seasons"]))
+        if data.get("number_of_episodes"):
+            self._add_element(root, "episode", str(data["number_of_episodes"]))
+
+        # Images
+        images = data.get("images", {})
+        poster_url = images.get("poster") or data.get("poster_url", "")
+        backdrop_url = images.get("backdrop") or data.get("backdrop_url", "")
+
+        if poster_url:
+            thumb = ET.SubElement(root, "thumb", {"aspect": "poster"})
+            thumb.text = poster_url
+
+        if backdrop_url:
+            fanart = ET.SubElement(root, "fanart")
+            fanart_thumb = ET.SubElement(fanart, "thumb")
+            fanart_thumb.text = backdrop_url
+
+        # Trailer
+        if data.get("trailer_key"):
+            trailer_url = f"plugin://plugin.video.youtube/?action=play_video&videoid={data['trailer_key']}"
+            self._add_element(root, "trailer", trailer_url)
+
+        # Content warnings
+        content_warnings = data.get("content_warnings", {})
+        if content_warnings:
+            if content_warnings.get("violence"):
+                self._add_element(root, "tag", f"Violence: {content_warnings['violence'].split(':')[0] if ':' in content_warnings['violence'] else content_warnings['violence']}")
+
+        # Age recommendation
+        if data.get("age_recommendation"):
+            self._add_element(root, "tag", f"Age: {data['age_recommendation']}")
+
+        # Timestamps
+        self._add_element(root, "dateadded", time.strftime("%Y-%m-%dT%H:%M:%S"))
+        if data.get("premiered"):
+            self._add_element(root, "premiered", data["premiered"])
+
+        return self._prettify_xml(root)
+
+    def _build_episode_nfo(self, episode_data: dict, show_data: dict = None) -> str:
+        """Build episode NFO XML content.
+
+        Args:
+            episode_data: Episode-specific metadata.
+            show_data: Optional parent show metadata.
+
+        Returns:
+            str: Formatted XML string.
+        """
+        root = ET.Element("episodedetails")
+
+        # Episode title
+        title = episode_data.get("title", "") or episode_data.get("episode_title", "")
+        self._add_element(root, "title", title)
+
+        # Show title
+        if show_data:
+            show_title = show_data.get("title", "") or show_data.get("show_name", "")
+            self._add_element(root, "showtitle", show_title)
+
+        # Season and episode numbers
+        if episode_data.get("season") is not None:
+            self._add_element(root, "season", str(episode_data["season"]))
+        if episode_data.get("episode") is not None:
+            self._add_element(root, "episode", str(episode_data["episode"]))
+
+        # Air date
+        aired = episode_data.get("aired", "") or episode_data.get("episode_air_date", "")
+        if aired:
+            self._add_element(root, "aired", aired)
+
+        # Runtime
+        if episode_data.get("runtime"):
+            self._add_element(root, "runtime", str(episode_data["runtime"]))
+
+        # Plot
+        plot = episode_data.get("plot", "") or episode_data.get("episode_plot", "")
+        if plot:
+            self._add_element(root, "plot", plot)
+
+        # Ratings
+        if episode_data.get("rating") is not None:
+            ratings_el = ET.SubElement(root, "ratings")
+            rating_el = ET.SubElement(ratings_el, "rating", {
+                "name": "tmdb",
+                "max": "10",
+                "default": "true",
+            })
+            self._add_element(rating_el, "value", str(episode_data["rating"]))
+            if episode_data.get("votes") is not None:
+                self._add_element(rating_el, "votes", str(episode_data["votes"]))
+
+        # Unique ID
+        if episode_data.get("tmdb_id"):
+            uid = ET.SubElement(root, "uniqueid", {"type": "tmdb", "default": "true"})
+            uid.text = str(episode_data["tmdb_id"])
+
+        # Directors
+        for director in episode_data.get("directors", []):
+            self._add_element(root, "director", director)
+
+        # Writers
+        for writer in episode_data.get("writers", []):
+            self._add_element(root, "credits", writer)
+
+        # Guest stars
+        for star in episode_data.get("guest_stars", []):
+            actor_el = ET.SubElement(root, "actor")
+            self._add_element(actor_el, "name", star.get("name", ""))
+            self._add_element(actor_el, "role", star.get("role", ""))
+            if star.get("thumb"):
+                self._add_element(actor_el, "thumb", star["thumb"])
+
+        # Still image
+        if episode_data.get("still_url"):
+            thumb = ET.SubElement(root, "thumb")
+            thumb.text = episode_data["still_url"]
+
+        return self._prettify_xml(root)
+
+    def _add_element(self, parent: ET.Element, tag: str, text: str) -> ET.Element:
+        """Add a text element to an XML parent."""
+        el = ET.SubElement(parent, tag)
+        el.text = str(text) if text else ""
+        return el
+
+    def _prettify_xml(self, element: ET.Element) -> str:
+        """Convert an XML element to a formatted string with proper indentation.
+
+        Args:
+            element: XML Element to format.
+
+        Returns:
+            str: Formatted XML string with declaration.
+        """
+        lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
+        self._indent_element(element, lines, level=0)
+        return "\n".join(lines) + "\n"
+
+    def _indent_element(self, element: ET.Element, lines: List[str], level: int):
+        """Recursively build indented XML lines."""
+        indent = "  " * level
+        tag = element.tag
+        attribs = "".join(f' {k}="{self._escape_xml(v)}"' for k, v in element.attrib.items())
+
+        children = list(element)
+        if children:
+            lines.append(f"{indent}<{tag}{attribs}>")
+            for child in children:
+                self._indent_element(child, lines, level + 1)
+            lines.append(f"{indent}</{tag}>")
+        elif element.text:
+            text = self._escape_xml(element.text)
+            lines.append(f"{indent}<{tag}{attribs}>{text}</{tag}>")
+        else:
+            lines.append(f"{indent}<{tag}{attribs} />")
+
+    def _escape_xml(self, text: str) -> str:
+        """Escape XML special characters."""
+        if not text:
+            return ""
+        text = str(text)
+        text = text.replace("&", "&amp;")
+        text = text.replace("<", "&lt;")
+        text = text.replace(">", "&gt;")
+        text = text.replace('"', "&quot;")
+        return text
+
+
+# Legacy functions for compatibility
+def create_nfo_content(movie_data: dict) -> str:
+    """Create NFO XML content from movie metadata (legacy function)."""
+    writer = NFOWriter()
+    return writer._build_movie_nfo(movie_data)
+
+
+def write_nfo_file(filepath: str, movie_data: dict) -> bool:
+    """Write an NFO file for a movie (legacy function)."""
+    writer = NFOWriter()
+    return writer.create_movie_nfo(movie_data, filepath)
+
+
+def create_tvshow_nfo_content(show_data: dict) -> str:
+    """Create NFO XML content for a TV show (legacy function)."""
+    writer = NFOWriter()
+    return writer._build_tvshow_nfo(show_data)
+
+
+def write_tvshow_nfo(show_folder: str, show_data: dict) -> bool:
+    """Write a tvshow.nfo file for a TV show (legacy function)."""
+    writer = NFOWriter()
+    nfo_path = os.path.join(show_folder, "tvshow.nfo")
+    return writer.create_tvshow_nfo(show_data, nfo_path)
+
+
+def create_episode_nfo_content(episode_data: dict, show_data: dict = None) -> str:
+    """Create NFO XML content for a TV episode (legacy function)."""
+    writer = NFOWriter()
+    return writer._build_episode_nfo(episode_data, show_data)
+
+
+def write_episode_nfo(episode_path: str, episode_data: dict, show_data: dict = None) -> bool:
+    """Write an episode NFO file (legacy function)."""
+    writer = NFOWriter()
     nfo_path = os.path.splitext(episode_path)[0] + ".nfo"
-    try:
-        content = create_episode_nfo_content(episode_data, show_data)
-        with open(nfo_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("Episode NFO written: %s", nfo_path)
-        return True
-    except Exception:
-        logger.exception("Failed to write episode NFO: %s", nfo_path)
-        return False
+    return writer.create_episode_nfo(episode_data, show_data, nfo_path)
