@@ -6,10 +6,10 @@ After=network.target
 [Service]
 Type=simple
 User=david
-Group=media
-WorkingDirectory=/opt/media-sanitizer
-ExecStart=/usr/bin/python3 -m jellyfin_organizer.sanitizer_main -c /opt/media-sanitizer/sanitizer_config.json
-Restart=on-failure
+Group=david
+WorkingDirectory=/home/david/Projects/python-movie-watcher
+ExecStart=/usr/bin/python3 -m jellyfin_organizer.sanitizer_main -c /home/david/Projects/python-movie-watcher/sanitizer_config.json
+Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
@@ -23,13 +23,14 @@ ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
 
-# Allow access to media directories (customize these paths)
+# Allow access to media directories
 ReadWritePaths=/mnt/media/torrents/complete/movies
 ReadWritePaths=/mnt/media/torrents/complete/tv
+ReadWritePaths=/mnt/media/torrents/complete/sonarr
+ReadWritePaths=/mnt/media/torrents/complete/radarr
 ReadWritePaths=/mnt/media/sanatize/movies
 ReadWritePaths=/mnt/media/sanatize/tv
-ReadWritePaths=/opt/media-sanitizer
-ReadWritePaths=/var/log
+ReadWritePaths=/home/david/Projects/python-movie-watcher
 
 [Install]
 WantedBy=multi-user.target
