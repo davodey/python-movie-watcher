@@ -2,15 +2,28 @@
   "tmdb_api_key": "YOUR_TMDB_API_KEY",
   "n8n_webhook_url": "http://localhost:5678/webhook/enrich-metadata",
 
-  "watch_folders": {
-    "movies": "/mnt/media/torrents/complete/movies",
-    "tv": "/mnt/media/torrents/complete/tv"
-  },
-
-  "output_folders": {
-    "movies": "/mnt/media/sanatize/movies",
-    "tv": "/mnt/media/sanatize/tv"
-  },
+  "watch_directories": [
+    {
+      "source": "/mnt/media/torrents/complete/movies",
+      "destination": "/mnt/media/sanatize/movies",
+      "media_type": "movie"
+    },
+    {
+      "source": "/mnt/media/torrents/complete/radarr",
+      "destination": "/mnt/media/sanatize/movies",
+      "media_type": "movie"
+    },
+    {
+      "source": "/mnt/media/torrents/complete/tv",
+      "destination": "/mnt/media/sanatize/tv",
+      "media_type": "tv"
+    },
+    {
+      "source": "/mnt/media/torrents/complete/sonarr",
+      "destination": "/mnt/media/sanatize/tv",
+      "media_type": "tv"
+    }
+  ],
 
   "watch_interval": 60,
   "database_path": "./sanitizer.db",
