@@ -107,6 +107,33 @@ TV_EPISODE_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Season-only pattern for season packs: S01, S02, etc. (no episode)
+TV_SEASON_PATTERN = re.compile(
+    r'[.\s_-]*[Ss](\d{1,2})(?:[.\s_-]|$)',  # S01. or S01 at word boundary
+    re.IGNORECASE
+)
+
+
+def _clean_filename_for_parsing(filename: str) -> str:
+    """Clean filename before parsing - handle bracketed suffixes and extensions.
+
+    Args:
+        filename: Raw filename.
+
+    Returns:
+        str: Cleaned filename ready for parsing.
+    """
+    name = filename
+
+    # Remove trailing bracketed content BEFORE splitext (e.g., [eztv.re], [rartv], [TGx])
+    # This prevents [eztv.re] from being seen as .re] extension
+    name = re.sub(r'\[[^\]]*\]$', '', name)
+
+    # Now safely remove file extension
+    name, _ = os.path.splitext(name)
+
+    return name
+
 
 def parse_movie_filename(filename: str) -> dict:
     """Parse a torrent movie filename into title, year, and quality info.
@@ -128,8 +155,8 @@ def parse_movie_filename(filename: str) -> dict:
     """
     original = filename
 
-    # Remove file extension if present
-    name, _ = os.path.splitext(filename)
+    # Clean filename (handle bracketed suffixes, extensions)
+    name = _clean_filename_for_parsing(filename)
 
     # Extract quality info BEFORE cleaning the filename
     quality_info = extract_quality_info(name)
@@ -137,8 +164,9 @@ def parse_movie_filename(filename: str) -> dict:
     # Replace dots and underscores with spaces
     name = name.replace('.', ' ').replace('_', ' ')
 
-    # Strip leading website tags
-    name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+    # Strip leading website tags (handles www.site.org - Title patterns)
+    # Pattern handles multiple spaces around the dash
+    name = re.sub(r'^www\s+\S+(?:\s+\S+)?\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
 
     # Find year first (we'll use it to truncate the name)
     year = None
@@ -200,8 +228,8 @@ def parse_tv_filename(filename: str) -> dict:
     """
     original = filename
 
-    # Remove file extension if present
-    name, _ = os.path.splitext(filename)
+    # Clean filename (handle bracketed suffixes, extensions)
+    name = _clean_filename_for_parsing(filename)
 
     # Extract quality info BEFORE cleaning
     quality_info = extract_quality_info(name)
@@ -209,8 +237,8 @@ def parse_tv_filename(filename: str) -> dict:
     # Replace dots and underscores with spaces
     name = name.replace('.', ' ').replace('_', ' ')
 
-    # Strip leading website tags
-    name = re.sub(r'^www\s+\S+\s+\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+    # Strip leading website tags (handles www.site.org - Title patterns)
+    name = re.sub(r'^www\s+\S+(?:\s+\S+)?\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
 
     # Find and extract season/episode info
     season = None
@@ -231,11 +259,18 @@ def parse_tv_filename(filename: str) -> dict:
         # Truncate name at the episode pattern
         name = name[:ep_match.start()]
     else:
-        # Try to find year for shows without episode info
-        year_match = YEAR_PATTERN.search(name)
-        if year_match:
-            year = int(year_match.group(1))
-            name = name[:year_match.start()]
+        # Try season-only pattern for season packs (S02 without episode)
+        season_match = TV_SEASON_PATTERN.search(name)
+        if season_match:
+            season = int(season_match.group(1))
+            # Truncate name at the season pattern
+            name = name[:season_match.start()]
+        else:
+            # Try to find year for shows without episode info
+            year_match = YEAR_PATTERN.search(name)
+            if year_match:
+                year = int(year_match.group(1))
+                name = name[:year_match.start()]
 
     # Apply strip patterns
     for pattern in STRIP_PATTERNS:
