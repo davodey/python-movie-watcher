@@ -812,6 +812,11 @@ def main():
         help="Clear failed entries from database for retry",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Clear ALL entries from database and reprocess everything (nuclear option)",
+    )
+    parser.add_argument(
         "--stats",
         action="store_true",
         help="Show processing statistics and exit",
@@ -846,6 +851,11 @@ def main():
         print(f"Collections tracked: {stats['collections']}")
         print(f"By type: {stats['by_type']}")
         return
+
+    # Force mode - clear ALL database entries (nuclear option)
+    if args.force:
+        cleared = sanitizer.db.clear_all()
+        logger.info("FORCE MODE: Cleared ALL %d entries from database", cleared)
 
     # Retry failed mode
     if args.retry_failed:

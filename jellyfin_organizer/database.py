@@ -222,6 +222,18 @@ class ProcessedDatabase:
         logger.info("Cleared %d failed entries from database", count)
         return count
 
+    def clear_all(self) -> int:
+        """Remove ALL entries from database (nuclear option for full reprocess).
+
+        Returns:
+            int: Number of entries cleared.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM processed_files")
+            count = cursor.rowcount
+        logger.info("Cleared ALL %d entries from database", count)
+        return count
+
     def get_recent(self, limit: int = 20, media_type: str = None) -> List[dict]:
         """Get recently processed entries.
 

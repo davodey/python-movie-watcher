@@ -125,12 +125,18 @@ def _clean_filename_for_parsing(filename: str) -> str:
     """
     name = filename
 
-    # Remove trailing bracketed content BEFORE splitext (e.g., [eztv.re], [rartv], [TGx])
+    # Remove trailing bracketed content BEFORE extension check (e.g., [eztv.re], [rartv], [TGx])
     # This prevents [eztv.re] from being seen as .re] extension
     name = re.sub(r'\[[^\]]*\]$', '', name)
 
-    # Now safely remove file extension
-    name, _ = os.path.splitext(name)
+    # Only remove actual video file extensions, not random dots in folder names
+    # This prevents www.UIndex.org from being truncated to www.UIndex
+    video_extensions = ('.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm', '.ts', '.m2ts')
+    lower_name = name.lower()
+    for ext in video_extensions:
+        if lower_name.endswith(ext):
+            name = name[:-len(ext)]
+            break
 
     return name
 
@@ -161,12 +167,16 @@ def parse_movie_filename(filename: str) -> dict:
     # Extract quality info BEFORE cleaning the filename
     quality_info = extract_quality_info(name)
 
+    # Strip leading website prefix BEFORE dot replacement (more reliable)
+    # Matches patterns like: www.UIndex.org - Title or www.Site.com: Title
+    name = re.sub(r'^www\.\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+
     # Replace dots and underscores with spaces
     name = name.replace('.', ' ').replace('_', ' ')
 
-    # Strip leading website tags (handles www.site.org - Title patterns)
-    # Pattern handles multiple spaces around the dash
-    name = re.sub(r'^www\s+\S+(?:\s+\S+)?\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+    # Strip any remaining website prefixes that might have been missed
+    # Handles: www domain tld - Title (after dot replacement)
+    name = re.sub(r'^www\s+\S+(?:\s+\S+)*\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
 
     # Find year first (we'll use it to truncate the name)
     year = None
@@ -234,11 +244,15 @@ def parse_tv_filename(filename: str) -> dict:
     # Extract quality info BEFORE cleaning
     quality_info = extract_quality_info(name)
 
+    # Strip leading website prefix BEFORE dot replacement (more reliable)
+    # Matches patterns like: www.UIndex.org - Title or www.Site.com: Title
+    name = re.sub(r'^www\.\S+\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+
     # Replace dots and underscores with spaces
     name = name.replace('.', ' ').replace('_', ' ')
 
-    # Strip leading website tags (handles www.site.org - Title patterns)
-    name = re.sub(r'^www\s+\S+(?:\s+\S+)?\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
+    # Strip any remaining website prefixes that might have been missed
+    name = re.sub(r'^www\s+\S+(?:\s+\S+)*\s*[-–—:]+\s*', '', name, flags=re.IGNORECASE)
 
     # Find and extract season/episode info
     season = None
