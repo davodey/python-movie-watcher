@@ -210,6 +210,10 @@ class N8nEnricher:
     def _send_with_retry(self, payload: dict) -> Optional[dict]:
         """Send payload to n8n webhook with retry logic.
 
+        Only retries on transient errors (network, timeout). Does NOT retry on
+        explicit failures from n8n (success: false) since those are data/validation
+        issues that won't be fixed by retrying.
+
         Args:
             payload: JSON payload to send.
 
@@ -220,9 +224,13 @@ class N8nEnricher:
 
         for attempt in range(self.retry_count + 1):
             try:
-                response = self._send_request(payload)
+                response, should_retry = self._send_request(payload)
                 if response:
                     return response
+                if not should_retry:
+                    # Explicit failure from n8n, don't retry
+                    logger.warning("n8n returned explicit failure, not retrying")
+                    return None
 
             except requests.exceptions.ConnectionError as e:
                 logger.warning(
@@ -249,14 +257,16 @@ class N8nEnricher:
         logger.error("n8n enrichment failed after %d attempts", self.retry_count + 1)
         return None
 
-    def _send_request(self, payload: dict) -> Optional[dict]:
+    def _send_request(self, payload: dict) -> tuple:
         """Send a single request to n8n webhook.
 
         Args:
             payload: JSON payload to send.
 
         Returns:
-            dict or None: Parsed response, or None on failure.
+            tuple: (response_data, should_retry)
+                - response_data: Parsed response dict, or None on failure
+                - should_retry: True if this is a transient error worth retrying
         """
         logger.debug("Sending to n8n: %s", payload.get("title", "unknown"))
 
@@ -274,24 +284,34 @@ class N8nEnricher:
                         "n8n enrichment successful for: %s",
                         payload.get("title", "unknown")
                     )
-                    return self._merge_response(payload, data)
+                    return self._merge_response(payload, data), False
                 else:
+                    # Explicit failure from n8n - don't retry, it's a data issue
                     logger.warning(
                         "n8n returned failure for: %s - %s",
                         payload.get("title", "unknown"),
                         data.get("error", "Unknown error")
                     )
-                    return None
+                    return None, False  # Don't retry explicit failures
             except json.JSONDecodeError:
                 logger.warning("n8n returned invalid JSON")
-                return None
+                return None, True  # Retry on JSON parse errors
+        elif response.status_code >= 500:
+            # Server errors are worth retrying
+            logger.warning(
+                "n8n server error %d for: %s",
+                response.status_code,
+                payload.get("title", "unknown")
+            )
+            return None, True
         else:
+            # Client errors (4xx) are not worth retrying
             logger.warning(
                 "n8n returned status %d for: %s",
                 response.status_code,
                 payload.get("title", "unknown")
             )
-            return None
+            return None, False
 
     def _merge_response(self, original: dict, response: dict) -> dict:
         """Merge n8n response with original data.

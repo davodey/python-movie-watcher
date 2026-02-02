@@ -302,7 +302,7 @@ class MediaSanitizer:
             logger.info("Quality upgrade detected! Old: %d, New: %d",
                        existing.get("quality_score", 0), parsed["quality_score"])
 
-        # Send to n8n for AI enrichment
+        # Send to n8n for AI enrichment (optional - processing continues even if this fails)
         logger.info("Sending to n8n for AI enrichment...")
         enriched_data = self.enricher.enrich_movie(tmdb_data)
 
@@ -311,8 +311,9 @@ class MediaSanitizer:
                        enriched_data.get("age_recommendation", "N/A"),
                        len(enriched_data.get("custom_tags", [])))
         else:
-            logger.warning("AI enrichment failed, using TMDb data only")
-            enriched_data = tmdb_data
+            logger.info("AI enrichment unavailable, continuing with TMDb data only")
+            # Create a copy to avoid mutating the original tmdb_data
+            enriched_data = tmdb_data.copy()
             enriched_data["enriched"] = False
 
         # Organize files
@@ -483,14 +484,16 @@ class MediaSanitizer:
         logger.info("TMDb match: %s (%s) [ID: %s]",
                    show_data.get("title"), show_data.get("year"), show_data.get("tmdb_id"))
 
-        # Enrich show data
+        # Enrich show data (optional - processing continues even if this fails)
         logger.info("Sending to n8n for AI enrichment...")
         enriched_show_data = self.enricher.enrich_tv_show(show_data)
 
         if enriched_show_data:
             logger.info("AI enrichment complete")
         else:
-            enriched_show_data = show_data
+            logger.info("AI enrichment unavailable, continuing with TMDb data only")
+            # Create a copy to avoid mutating the original show_data
+            enriched_show_data = show_data.copy()
             enriched_show_data["enriched"] = False
 
         # Process each video file
@@ -526,6 +529,12 @@ class MediaSanitizer:
                 )
                 success_count += 1
 
+            except PermissionError as e:
+                logger.error("Permission denied for episode %s: %s", os.path.basename(video_path), e)
+            except FileNotFoundError as e:
+                logger.error("File not found for episode %s: %s", os.path.basename(video_path), e)
+            except OSError as e:
+                logger.error("OS error for episode %s: %s", os.path.basename(video_path), e)
             except Exception:
                 logger.exception("Failed to organize episode: %s", os.path.basename(video_path))
 
@@ -567,8 +576,12 @@ class MediaSanitizer:
             parsed_info: Parsed filename info.
             destination: Base destination directory.
         """
-        show_name = show_data.get("title", "") or show_data.get("show_name", "")
+        show_name = show_data.get("title", "") or show_data.get("show_name", "") or parsed_info.get("show_name", "Unknown Show")
         show_name = sanitize_filename(show_name)
+
+        if not show_name or show_name == "Unknown Show":
+            logger.warning("Could not determine show name, using parsed name: %s", parsed_info.get("show_name", "Unknown"))
+            show_name = sanitize_filename(parsed_info.get("show_name", "Unknown Show"))
 
         season = parsed_info.get("season") or 1
         episode = parsed_info.get("episode") or 1
@@ -604,9 +617,14 @@ class MediaSanitizer:
             video_filename = f"{base}_{timestamp}{video_ext}"
             dest_video = os.path.join(season_folder, video_filename)
 
+        # Verify source exists before moving
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Source video file does not exist: {video_path}")
+
         # Move video
-        logger.info("Moving: %s", video_filename)
+        logger.info("Moving: %s -> %s", os.path.basename(video_path), dest_video)
         shutil.move(video_path, dest_video)
+        logger.debug("Move successful")
 
         # Create episode NFO
         if episode_data:
